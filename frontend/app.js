@@ -50,24 +50,19 @@ function initGraph(elements) {
         },
       },
       {
-        selector: '.path-edge',
+        selector: '.path-edge-success',
         style: {
-          'line-color': '#ff6f3c',
-          'target-arrow-color': '#ff6f3c',
+          'line-color': '#52c41a',
+          'target-arrow-color': '#52c41a',
+          'width': 3
         },
       },
       {
-        selector: '.edge-ok',
+        selector: '.path-edge-error',
         style: {
-          'line-color': '#2ca24d',
-          'target-arrow-color': '#2ca24d',
-        },
-      },
-      {
-        selector: '.edge-bad',
-        style: {
-          'line-color': '#d64541',
-          'target-arrow-color': '#d64541',
+          'line-color': '#ff4d4f',
+          'target-arrow-color': '#ff4d4f',
+          'width': 3
         },
       },
     ],
@@ -116,22 +111,10 @@ function buildGraphFromTrace(mode, trace) {
     nodes.push({ data: { id, label, kind } });
   }
 
-  function addEdge(source, target, label, edgeId, className) {
+  function addEdge(source, target, label, edgeId) {
     const id = edgeId || `${source}->${target}`;
-    const edge = { data: { id, source, target, label } };
-    if (className) {
-      edge.classes = className;
-    }
-    edges.push(edge);
+    edges.push({ data: { id, source, target, label } });
     pathEdgeIds.push(id);
-  }
-
-  function edgeClassFromStep(step) {
-    const status = summarizeResponse(step);
-    if (status === 'OK' || status === 'CACHE_MISS') {
-      return 'edge-ok';
-    }
-    return 'edge-bad';
   }
 
   const normalizedMode = mode === 'iterative' ? 'iterative' : 'recursive';
@@ -187,17 +170,11 @@ function buildGraphFromTrace(mode, trace) {
   });
 
   if (normalizedMode === 'iterative') {
-    let stepNo = 1;
     serverSteps.forEach((step, idx) => {
       const target = `server:${step.server}`;
-      const detail = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
-      const queryLabel = `${stepNo}. Query ${detail}`;
-      stepNo += 1;
-      const responseLabel = `${stepNo}. Response`;
-      stepNo += 1;
-      const className = edgeClassFromStep(step);
-      addEdge('client', target, queryLabel, `path-${idx}-client-${target}`, className);
-      addEdge(target, 'client', responseLabel, `path-${idx}-${target}-client`, className);
+      const label = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
+      addEdge('client', target, label, `path-${idx}-client-${target}`);
+      addEdge(target, 'client', 'Response', `path-${idx}-${target}-client`);
     });
   } else {
     addEdge('client', 'resolver', 'Recursive Query', 'path-client-resolver');
@@ -206,9 +183,8 @@ function buildGraphFromTrace(mode, trace) {
     serverSteps.forEach((step, idx) => {
       const target = `server:${step.server}`;
       const label = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
-      const className = edgeClassFromStep(step);
-      addEdge(prev, target, label, `path-${idx}-${prev}-${target}`, className);
-      addEdge(target, prev, 'Response', `path-${idx}-${target}-${prev}`, className);
+      addEdge(prev, target, label, `path-${idx}-${prev}-${target}`);
+      addEdge(target, prev, 'Response', `path-${idx}-${target}-${prev}`);
       prev = target;
     });
   }
@@ -216,7 +192,7 @@ function buildGraphFromTrace(mode, trace) {
   return { elements: [...nodes, ...edges], pathEdgeIds };
 }
 
-function updateGraph(mode, trace) {
+function updateGraph(mode, trace, isError) {
   const built = buildGraphFromTrace(mode, trace);
   const elements = built.elements;
   const layout =
@@ -231,10 +207,13 @@ function updateGraph(mode, trace) {
     cy.layout(layout).run();
   }
 
+  const pathClass = isError ? 'path-edge-error' : 'path-edge-success';
+  
   built.pathEdgeIds.forEach((edgeId) => {
     const edge = cy.getElementById(edgeId);
     if (edge) {
-      edge.addClass('path-edge');
+      edge.removeClass('path-edge-success path-edge-error');
+      edge.addClass(pathClass); 
     }
   });
 }
@@ -250,9 +229,24 @@ function renderTrace(trace) {
   });
 }
 
-function renderStats(stats) {
+// 接收 result 参数并显示 IP
+function renderStats(stats, result) {
   statsEl.innerHTML = '';
+  
+  let resultDisplay = '';
+  if (result && result.records && result.records.length > 0) {
+    // 如果有 IP 记录，用加粗蓝色字体显示
+    resultDisplay = `<div style="margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee;">
+      <strong>解析结果 IP:</strong><br>
+      <span style="color: #1890ff; font-weight: bold; font-size: 1.1em;">${result.records.join('<br>')}</span>
+    </div>`;
+  } else {
+    resultDisplay = `<div style="margin-bottom: 10px; color: #999;">解析结果: (无数据)</div>`;
+  }
+
   statsEl.innerHTML = `
+    ${resultDisplay}
+    <div>状态: <strong>${stats.status || 'UNKNOWN'}</strong></div>
     <div>命中率: ${stats.hit_rate}</div>
     <div>总耗时: ${stats.total_time_ms} ms</div>
     <div>失败率: ${stats.failure_rate}</div>
@@ -281,9 +275,22 @@ async function resolve() {
 
   const data = await res.json();
   const renderMode = data.mode || mode;
-  updateGraph(renderMode, data.trace);
+  
+  const status = (data.stats && data.stats.status) || 'UNKNOWN';
+  
+  const isError = 
+    (data.stats && data.stats.is_error) || 
+    (data.stats && data.stats.failure_rate > 0) ||
+    ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN'].includes(status);
+
+  console.log("解析结果:", status, "是否标记为错误:", isError); 
+
+  updateGraph(renderMode, data.trace, isError); 
   renderTrace(data.trace);
-  renderStats(data.stats);
+  
+  // 传入 data.result
+  renderStats(data.stats, data.result); 
+  
   renderAI(data.ai_advice);
 }
 
