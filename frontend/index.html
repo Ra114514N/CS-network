@@ -3,24 +3,24 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI DNS Simulation</title>
+    <title>AI DNS 解析仿真</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
   </head>
   <body>
     <div class="app">
       <header>
-        <h1>AI DNS Resolve Simulator</h1>
-        <p>Recursive vs Iterative, cache, faults, and load-balancing in one view.</p>
+        <h1>AI DNS 解析仿真</h1>
+        <p>递归/迭代、缓存、故障与负载均衡，一屏查看。</p>
       </header>
 
       <section class="controls">
         <div class="field">
-          <label for="domain">Domain</label>
+          <label for="domain">域名</label>
           <input id="domain" type="text" value="www.example.com" />
         </div>
         <div class="field">
-          <label for="qtype">QType</label>
+          <label for="qtype">记录类型</label>
           <select id="qtype">
             <option value="A">A</option>
             <option value="AAAA">AAAA</option>
@@ -29,21 +29,21 @@
           </select>
         </div>
         <div class="field">
-          <label>Mode</label>
+          <label>模式</label>
           <div class="radio-group">
-            <label><input type="radio" name="mode" value="recursive" checked /> 递归查询</label>
-            <label><input type="radio" name="mode" value="iterative" /> 迭代查询</label>
+            <label><input type="radio" name="mode" value="recursive" checked /> 递归</label>
+            <label><input type="radio" name="mode" value="iterative" /> 迭代</label>
           </div>
         </div>
         <div class="field">
-          <label>Scenarios</label>
+          <label>场景开关</label>
           <div class="checkbox-group">
-            <label><input id="pollution" type="checkbox" /> Pollution</label>
-            <label><input id="failure" type="checkbox" /> Failure</label>
-            <label><input id="lb" type="checkbox" /> Load Balancing</label>
+            <label><input id="pollution" type="checkbox" /> 污染</label>
+            <label><input id="failure" type="checkbox" /> 故障</label>
+            <label><input id="lb" type="checkbox" /> 负载均衡</label>
           </div>
         </div>
-        <button id="resolve">Resolve</button>
+        <button id="resolve">解析</button>
       </section>
 
       <main>
@@ -52,15 +52,15 @@
         </div>
         <div class="side-panel">
           <section>
-            <h2>Trace</h2>
+            <h2>解析过程</h2>
             <div id="trace"></div>
           </section>
           <section>
-            <h2>Stats</h2>
+            <h2>统计</h2>
             <div id="stats"></div>
           </section>
           <section>
-            <h2>AI Advice</h2>
+            <h2>AI 建议</h2>
             <div id="ai"></div>
           </section>
         </div>

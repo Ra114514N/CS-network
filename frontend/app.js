@@ -56,6 +56,20 @@ function initGraph(elements) {
           'target-arrow-color': '#ff6f3c',
         },
       },
+      {
+        selector: '.edge-ok',
+        style: {
+          'line-color': '#2ca24d',
+          'target-arrow-color': '#2ca24d',
+        },
+      },
+      {
+        selector: '.edge-bad',
+        style: {
+          'line-color': '#d64541',
+          'target-arrow-color': '#d64541',
+        },
+      },
     ],
     layout: { name: 'breadthfirst', directed: true, padding: 10 },
   });
@@ -102,10 +116,22 @@ function buildGraphFromTrace(mode, trace) {
     nodes.push({ data: { id, label, kind } });
   }
 
-  function addEdge(source, target, label, edgeId) {
+  function addEdge(source, target, label, edgeId, className) {
     const id = edgeId || `${source}->${target}`;
-    edges.push({ data: { id, source, target, label } });
+    const edge = { data: { id, source, target, label } };
+    if (className) {
+      edge.classes = className;
+    }
+    edges.push(edge);
     pathEdgeIds.push(id);
+  }
+
+  function edgeClassFromStep(step) {
+    const status = summarizeResponse(step);
+    if (status === 'OK' || status === 'CACHE_MISS') {
+      return 'edge-ok';
+    }
+    return 'edge-bad';
   }
 
   const normalizedMode = mode === 'iterative' ? 'iterative' : 'recursive';
@@ -161,11 +187,17 @@ function buildGraphFromTrace(mode, trace) {
   });
 
   if (normalizedMode === 'iterative') {
+    let stepNo = 1;
     serverSteps.forEach((step, idx) => {
       const target = `server:${step.server}`;
-      const label = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
-      addEdge('client', target, label, `path-${idx}-client-${target}`);
-      addEdge(target, 'client', 'Response', `path-${idx}-${target}-client`);
+      const detail = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
+      const queryLabel = `${stepNo}. Query ${detail}`;
+      stepNo += 1;
+      const responseLabel = `${stepNo}. Response`;
+      stepNo += 1;
+      const className = edgeClassFromStep(step);
+      addEdge('client', target, queryLabel, `path-${idx}-client-${target}`, className);
+      addEdge(target, 'client', responseLabel, `path-${idx}-${target}-client`, className);
     });
   } else {
     addEdge('client', 'resolver', 'Recursive Query', 'path-client-resolver');
@@ -174,8 +206,9 @@ function buildGraphFromTrace(mode, trace) {
     serverSteps.forEach((step, idx) => {
       const target = `server:${step.server}`;
       const label = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
-      addEdge(prev, target, label, `path-${idx}-${prev}-${target}`);
-      addEdge(target, prev, 'Response', `path-${idx}-${target}-${prev}`);
+      const className = edgeClassFromStep(step);
+      addEdge(prev, target, label, `path-${idx}-${prev}-${target}`, className);
+      addEdge(target, prev, 'Response', `path-${idx}-${target}-${prev}`, className);
       prev = target;
     });
   }
@@ -220,9 +253,9 @@ function renderTrace(trace) {
 function renderStats(stats) {
   statsEl.innerHTML = '';
   statsEl.innerHTML = `
-    <div>Hit rate: ${stats.hit_rate}</div>
-    <div>Total time: ${stats.total_time_ms} ms</div>
-    <div>Failure rate: ${stats.failure_rate}</div>
+    <div>命中率: ${stats.hit_rate}</div>
+    <div>总耗时: ${stats.total_time_ms} ms</div>
+    <div>失败率: ${stats.failure_rate}</div>
   `;
 }
 
