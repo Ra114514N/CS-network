@@ -54,7 +54,7 @@ function initGraph(elements) {
         style: {
           'line-color': '#52c41a',
           'target-arrow-color': '#52c41a',
-          'width': 3
+          width: 3,
         },
       },
       {
@@ -62,7 +62,7 @@ function initGraph(elements) {
         style: {
           'line-color': '#ff4d4f',
           'target-arrow-color': '#ff4d4f',
-          'width': 3
+          width: 3,
         },
       },
     ],
@@ -159,6 +159,7 @@ function buildGraphFromTrace(mode, trace) {
       },
     ];
   }
+
   const serverIds = [];
   serverSteps.forEach((step) => {
     const serverId = `server:${step.server}`;
@@ -208,12 +209,11 @@ function updateGraph(mode, trace, isError) {
   }
 
   const pathClass = isError ? 'path-edge-error' : 'path-edge-success';
-  
   built.pathEdgeIds.forEach((edgeId) => {
     const edge = cy.getElementById(edgeId);
     if (edge) {
       edge.removeClass('path-edge-success path-edge-error');
-      edge.addClass(pathClass); 
+      edge.addClass(pathClass);
     }
   });
 }
@@ -229,15 +229,27 @@ function renderTrace(trace) {
   });
 }
 
-// 接收 result 参数并显示 IP
-function renderStats(stats, result) {
+function formatResultTitle(qtype) {
+  if (qtype === 'NS') {
+    return '解析结果 NS:';
+  }
+  if (qtype === 'DNAME') {
+    return '解析结果 DNAME:';
+  }
+  if (qtype === 'CNAME') {
+    return '解析结果 CNAME:';
+  }
+  return '解析结果 IP:';
+}
+
+function renderStats(stats, result, qtype) {
   statsEl.innerHTML = '';
-  
+
   let resultDisplay = '';
   if (result && result.records && result.records.length > 0) {
-    // 如果有 IP 记录，用加粗蓝色字体显示
+    const title = formatResultTitle(qtype);
     resultDisplay = `<div style="margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee;">
-      <strong>解析结果 IP:</strong><br>
+      <strong>${title}</strong><br>
       <span style="color: #1890ff; font-weight: bold; font-size: 1.1em;">${result.records.join('<br>')}</span>
     </div>`;
   } else {
@@ -275,22 +287,18 @@ async function resolve() {
 
   const data = await res.json();
   const renderMode = data.mode || mode;
-  
+
   const status = (data.stats && data.stats.status) || 'UNKNOWN';
-  
-  const isError = 
-    (data.stats && data.stats.is_error) || 
+  const isError =
+    (data.stats && data.stats.is_error) ||
     (data.stats && data.stats.failure_rate > 0) ||
     ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN'].includes(status);
 
-  console.log("解析结果:", status, "是否标记为错误:", isError); 
+  console.log('解析结果:', status, '是否标记为错误?', isError);
 
-  updateGraph(renderMode, data.trace, isError); 
+  updateGraph(renderMode, data.trace, isError);
   renderTrace(data.trace);
-  
-  // 传入 data.result
-  renderStats(data.stats, data.result); 
-  
+  renderStats(data.stats, data.result, qtype);
   renderAI(data.ai_advice);
 }
 

@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 # 导入拆分后的模块
 from core.engine import DNSEngine
-from analysis.stats import ai_advisor, build_graph_data
+from analysis.stats import ai_advisor
 
 # 设置路径
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +73,6 @@ def resolve():
 
     # 3. 生成可视化数据和 AI 建议
     # 将 is_error 传给 build_graph_data
-    graph = build_graph_data(qname, is_error)
     advice = ai_advisor(stats)
 
     # 4. 返回综合结果
@@ -81,7 +80,6 @@ def resolve():
         "result": response,
         "trace": trace,
         "stats": stats,
-        "graph": graph,
         "ai_advice": advice,
         "mode": mode 
     })

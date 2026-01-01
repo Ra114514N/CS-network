@@ -11,14 +11,24 @@ ZONE_DATA = {
         "NS": {"example.com": {"records": ["ns1.example.com"], "ttl": 300}},
         "A": {
             "www.example.com": {"records": ["93.184.216.34"], "ttl": 120},
+            "api.example.com": {"records": ["93.184.216.35"], "ttl": 120},
             # 模拟负载均衡记录
             "www-lb.example.com": {"records": ["203.0.113.10", "203.0.113.11", "203.0.113.12"], "ttl": 30},
         },
         "AAAA": {
             "www.example.com": {"records": ["2606:2800:220:1:248:1893:25c8:1946"], "ttl": 120},
+            "api.example.com": {"records": ["2606:2800:220:1:248:1893:25c8:1947"], "ttl": 120},
         },
         "CNAME": {
             "alias.example.com": {"records": ["www.example.com"], "ttl": 120},
+            "mail.example.com": {"records": ["www.example.com"], "ttl": 180},
+        },
+        "NS": {
+            "example.com": {"records": ["ns1.example.com"], "ttl": 300},
+            "dev.example.com": {"records": ["ns1.example.com"], "ttl": 300},
+        },
+        "DNAME": {
+            "legacy.example.com": {"records": ["example.com"], "ttl": 300},
         },
     },
 }
