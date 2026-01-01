@@ -2,8 +2,11 @@ const resolveBtn = document.getElementById('resolve');
 const traceEl = document.getElementById('trace');
 const statsEl = document.getElementById('stats');
 const aiEl = document.getElementById('ai');
+const askAiBtn = document.getElementById('ask-ai');
+const aiQuestionInput = document.getElementById('ai-question');
 
 let cy = null;
+let lastContext = null;
 
 function initGraph(elements) {
   cy = cytoscape({
@@ -299,8 +302,41 @@ async function resolve() {
   updateGraph(renderMode, data.trace, isError);
   renderTrace(data.trace);
   renderStats(data.stats, data.result, qtype);
-  renderAI(data.ai_advice);
+  renderAI('AI 未查询，点击"询问 AI"按钮后获取建议。');
+
+  lastContext = {
+    domain,
+    qtype,
+    mode: renderMode,
+    scenarios,
+    stats: data.stats,
+    result: data.result,
+    trace: data.trace,
+  };
+}
+
+async function askAI() {
+  if (!lastContext) {
+    renderAI('请先点击“解析”获得最新的查询上下文。');
+    return;
+  }
+
+  const question = (aiQuestionInput.value || '').trim() || '请结合以上查询信息给出简要建议。';
+  renderAI('AI 正在分析中…');
+
+  try {
+    const res = await fetch('/ai/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...lastContext, question }),
+    });
+    const data = await res.json();
+    renderAI(data.text || data.ai_advice || 'AI 暂无回应。');
+  } catch (err) {
+    renderAI(`AI 请求失败: ${err.message}`);
+  }
 }
 
 resolveBtn.addEventListener('click', resolve);
+askAiBtn.addEventListener('click', askAI);
 window.addEventListener('load', resolve);

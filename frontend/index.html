@@ -46,23 +46,36 @@
         <button id="resolve">解析</button>
       </section>
 
-      <main>
-        <div class="graph-panel">
-          <div id="cy"></div>
+      <main class="main-grid">
+        <div class="left-stack">
+          <div class="graph-panel card">
+            <div id="cy"></div>
+          </div>
+          <div class="info-panels">
+            <section class="card">
+              <h2>解析过程</h2>
+              <div id="trace"></div>
+            </section>
+            <section class="card">
+              <h2>统计</h2>
+              <div id="stats"></div>
+            </section>
+          </div>
         </div>
-        <div class="side-panel">
-          <section>
-            <h2>解析过程</h2>
-            <div id="trace"></div>
-          </section>
-          <section>
-            <h2>统计</h2>
-            <div id="stats"></div>
-          </section>
-          <section>
-            <h2>AI 建议</h2>
+
+        <div class="ai-panel card">
+          <h2>AI 诊断表单</h2>
+          <div class="ai-box">
+            <label for="ai-question">向 AI 追加提问</label>
+            <textarea id="ai-question" placeholder="例如：结合本次查询，给出可能的原因、风险和建议。"> </textarea>
+            <div class="ai-actions">
+              <button id="ask-ai" type="button">询问 AI</button>
+            </div>
+          </div>
+          <div class="ai-inline">
+            <div class="ai-inline-label">AI 建议</div>
             <div id="ai"></div>
-          </section>
+          </div>
         </div>
       </main>
     </div>
