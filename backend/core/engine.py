@@ -179,8 +179,8 @@ class DNSEngine:
         
         trace.append(self._build_trace_step("ns1.example.com", "auth", qname, qtype, response, False, latency, response.get("ttl", 0)))
 
-        # 写入缓存
-        if response["status"] in ["OK", "POLLUTED"] and response.get("ttl", 0) > 0:
+        # 写入缓存（只缓存真实 OK 的权威响应，避免将污染结果持久化）
+        if response["status"] == "OK" and response.get("ttl", 0) > 0:
             self.set_cache(qname, qtype, response, response["ttl"])
 
         return response, trace
@@ -216,8 +216,8 @@ class DNSEngine:
         response, steps = self.iterative_resolve(qname, qtype, config)
         trace.extend(steps)
 
-        # 递归服务器写入缓存
-        if response["status"] in ["OK", "POLLUTED"] and response.get("ttl", 0) > 0:
+        # 递归服务器写入缓存（只缓存 OK，避免缓存污染响应）
+        if response["status"] == "OK" and response.get("ttl", 0) > 0:
             self.set_cache(qname, qtype, response, response["ttl"])
 
         return response, trace

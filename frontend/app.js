@@ -7,6 +7,7 @@ const aiQuestionInput = document.getElementById('ai-question');
 
 let cy = null;
 let lastContext = null;
+let drawTimers = [];
 
 function initGraph(elements) {
   cy = cytoscape({
@@ -183,14 +184,34 @@ function buildGraphFromTrace(mode, trace) {
   } else {
     addEdge('client', 'resolver', 'Recursive Query', 'path-client-resolver');
 
-    let prev = 'resolver';
-    serverSteps.forEach((step, idx) => {
-      const target = `server:${step.server}`;
-      const label = `${step.qtype} ${summarizeResponse(step)} ${step.latency_ms}ms cache:${step.cache_hit}`;
-      addEdge(prev, target, label, `path-${idx}-${prev}-${target}`);
-      addEdge(target, prev, 'Response', `path-${idx}-${target}-${prev}`);
-      prev = target;
-    });
+    // 按照图示的真实递归往返顺序：
+    // client -> resolver -> root -> tld -> auth -> tld -> root -> resolver -> client
+    if (serverSteps.length > 0) {
+      // 请求链路：resolver -> root -> tld -> auth
+      const first = serverSteps[0];
+      const firstId = `server:${first.server}`;
+      const labelFirst = `${first.qtype} ${summarizeResponse(first)} ${first.latency_ms}ms cache:${first.cache_hit}`;
+      addEdge('resolver', firstId, labelFirst, `path-req-0-resolver-${first.server}`);
+
+      for (let i = 0; i < serverSteps.length - 1; i++) {
+        const from = `server:${serverSteps[i].server}`;
+        const to = `server:${serverSteps[i + 1].server}`;
+        const next = serverSteps[i + 1];
+        const label = `${next.qtype} ${summarizeResponse(next)} ${next.latency_ms}ms cache:${next.cache_hit}`;
+        addEdge(from, to, label, `path-req-${i + 1}-${serverSteps[i].server}-${serverSteps[i + 1].server}`);
+      }
+
+      // 响应链路：auth -> tld -> root -> resolver
+      for (let i = serverSteps.length - 1; i >= 0; i--) {
+        const from = `server:${serverSteps[i].server}`;
+        const to = i > 0 ? `server:${serverSteps[i - 1].server}` : 'resolver';
+        const idSafeTo = to.replace(/[:.]/g, '-');
+        addEdge(from, to, 'Response', `path-resp-${i}-${serverSteps[i].server}-${idSafeTo}`);
+      }
+    }
+
+    // 最终 resolver -> client 的返回
+    addEdge('resolver', 'client', 'Response', 'path-resolver-client');
   }
 
   return { elements: [...nodes, ...edges], pathEdgeIds };
@@ -206,18 +227,42 @@ function updateGraph(mode, trace, isError) {
   if (!cy) {
     initGraph(elements);
   } else {
+    // 清理上一次的图和定时器
+    drawTimers.forEach((t) => clearTimeout(t));
+    drawTimers = [];
+
     cy.elements().remove();
     cy.add(elements);
     cy.layout(layout).run();
   }
 
   const pathClass = isError ? 'path-edge-error' : 'path-edge-success';
+
+  // 先移除所有路径边（我们将逐个绘制它们）
   built.pathEdgeIds.forEach((edgeId) => {
     const edge = cy.getElementById(edgeId);
-    if (edge) {
-      edge.removeClass('path-edge-success path-edge-error');
-      edge.addClass(pathClass);
-    }
+    if (edge) edge.remove();
+  });
+
+  // 按顺序每隔2秒添加一个路径边，并应用样式
+  built.pathEdgeIds.forEach((edgeId, idx) => {
+    const edgeData = elements.find((el) => el.data && el.data.id === edgeId);
+    if (!edgeData) return;
+    const timer = setTimeout(() => {
+      cy.add(edgeData);
+      const e = cy.getElementById(edgeId);
+      if (e) {
+        e.removeClass('path-edge-success path-edge-error');
+        e.addClass(pathClass);
+      }
+      // 可选：重新布局以平滑显示（如果不需要可注释）
+      try {
+        cy.layout(layout).run();
+      } catch (err) {
+        // ignore layout errors
+      }
+    }, idx * 2000);
+    drawTimers.push(timer);
   });
 }
 
