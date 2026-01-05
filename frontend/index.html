@@ -30,6 +30,8 @@
         </div>
         <div class="field">
           <label>模式</label>
+          <!-- 修正：标签与 value 对应关系 -->
+          <!-- 之前这里反了，导致点递归跑的是迭代逻辑 -->
           <div class="radio-group">
             <label><input type="radio" name="mode" value="recursive" checked /> 递归</label>
             <label><input type="radio" name="mode" value="iterative" /> 迭代</label>
@@ -43,12 +45,27 @@
             <label><input id="lb" type="checkbox" /> 负载均衡</label>
           </div>
         </div>
-        <button id="resolve">解析</button>
+        <button id="resolve">
+          <span class="btn-text">解析</span>
+        </button>
       </section>
 
       <main class="main-grid">
         <div class="left-stack">
           <div class="graph-panel card">
+            <!-- Loading 遮罩 -->
+            <div id="loading-mask" class="loading-mask hidden">
+              <div class="radar-spinner"></div>
+              <div class="loading-text">正在查询全球 DNS 网络...</div>
+            </div>
+            
+            <!-- 悬浮提示框 (Tooltip) -->
+            <div id="graph-tooltip" class="graph-tooltip hidden"></div>
+            
+            <!-- 动画数据包 (新增) -->
+            <div id="packet" class="hidden">Packet</div>
+
+            <!-- 图表容器 -->
             <div id="cy"></div>
           </div>
           <div class="info-panels">

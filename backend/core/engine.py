@@ -14,9 +14,11 @@ class CacheEntry:
 
 class DNSEngine:
     def __init__(self):
-        # 内存缓存
-        self.cache: Dict[str, CacheEntry] = {}
-        # 负载均衡状态记录：用于轮询算法 (Round Robin)
+        # 分离缓存：防止递归查询的结果污染迭代查询的演示
+        self.client_cache: Dict[str, CacheEntry] = {}    # 迭代模式：模拟客户端本地缓存
+        self.resolver_cache: Dict[str, CacheEntry] = {}  # 递归模式：模拟递归服务器缓存
+        
+        # 负载均衡状态记录
         self.lb_state: Dict[str, int] = {}
 
     def _now_ts(self) -> float:
@@ -25,20 +27,23 @@ class DNSEngine:
     def _cache_key(self, qname: str, qtype: str) -> str:
         return f"{qname}|{qtype}"
 
-    def get_cache(self, qname: str, qtype: str) -> Optional[CacheEntry]:
-        """获取缓存"""
+    def get_cache(self, cache_type: str, qname: str, qtype: str) -> Optional[CacheEntry]:
+        """获取缓存，支持指定 cache_type ('client' or 'resolver')"""
+        target_cache = self.client_cache if cache_type == 'client' else self.resolver_cache
         key = self._cache_key(qname, qtype)
-        entry = self.cache.get(key)
+        entry = target_cache.get(key)
+        
         if not entry:
             return None
         if entry.expire_time <= self._now_ts():
-            self.cache.pop(key, None)
+            target_cache.pop(key, None)
             return None
         return entry
 
-    def set_cache(self, qname: str, qtype: str, value: dict, ttl: int) -> None:
+    def set_cache(self, cache_type: str, qname: str, qtype: str, value: dict, ttl: int) -> None:
         """设置缓存"""
-        self.cache[self._cache_key(qname, qtype)] = CacheEntry(
+        target_cache = self.client_cache if cache_type == 'client' else self.resolver_cache
+        target_cache[self._cache_key(qname, qtype)] = CacheEntry(
             value=value,
             expire_time=self._now_ts() + ttl,
             ttl=ttl,
@@ -48,53 +53,35 @@ class DNSEngine:
         return max(0, int(entry.expire_time - self._now_ts()))
 
     def _simulated_latency_ms(self, unstable: bool = False) -> int:
-        """
-        模拟网络延迟
-        - 如果 unstable 为 True (开启故障开关): 返回 10-60ms 的随机波动
-        - 如果 unstable 为 False (默认): 返回固定的 30ms
-        """
         if unstable:
             return random.randint(10, 60)
         return 30
 
     def _maybe_fail(self, server: str, enabled: bool) -> bool:
-        """模拟服务器故障"""
         if not enabled:
             return False
-        
-        # 读取 mock_db 中的概率配置
         prob = FAILURE_PROBS.get(server, 0.0)
         return random.random() < prob
 
     def _apply_pollution(self, qname: str, qtype: str, enabled: bool, response: dict) -> dict:
-        """应用 DNS 污染规则"""
         if not enabled:
             return response
-        
         rule = POLLUTION_MAP.get(qname)
         if not rule:
             return response
-            
         if rule["type"] == "NXDOMAIN":
             return {"status": "POLLUTED", "records": [], "ttl": 0, "original_status": "NXDOMAIN"}
-            
         if rule["type"] == qtype:
             return {"status": "POLLUTED", "records": [rule["value"]], "ttl": 30}
-            
         return response
 
     def _lb_pick(self, qname: str, records: List[str]) -> str:
-        """
-        简单的轮询负载均衡算法 (Round Robin)
-        每次请求时，索引 +1，从而返回列表中的下一个 IP
-        """
         idx = self.lb_state.get(qname, 0) % len(records)
         self.lb_state[qname] = idx + 1
         return records[idx]
 
     def _build_trace_step(self, server: str, level: str, qname: str, qtype: str, 
                          response: dict, cache_hit: bool, latency_ms: int, ttl_remaining: int) -> dict:
-        """构建单步追踪日志"""
         return {
             "server": server,
             "level": level,
@@ -107,7 +94,6 @@ class DNSEngine:
         }
 
     def _resolve_authoritative(self, qname: str, qtype: str, use_lb: bool) -> dict:
-        """模拟权威服务器查询"""
         zone = ZONE_DATA.get("example.com", {})
         qtype_data = zone.get(qtype, {})
         record = qtype_data.get(qname)
@@ -118,33 +104,21 @@ class DNSEngine:
         records = record["records"]
         ttl = record["ttl"]
 
-        # [逻辑] 仅当开启了 LB 开关 且 记录数大于1 时才进行负载均衡
         if use_lb and len(records) > 1:
             picked = self._lb_pick(qname, records)
             return {"status": "OK", "records": [picked], "ttl": ttl}
             
-        # 否则返回所有记录
         return {"status": "OK", "records": records, "ttl": ttl}
 
-    def iterative_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
-        """迭代查询逻辑"""
+    def _core_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
+        """
+        核心解析逻辑（不包含缓存检查）
+        负责 Root -> TLD -> Auth 的遍历过程
+        """
         trace: List[dict] = []
         unstable_net = config["failure"]
 
-        # 1. 检查本地缓存
-        # 【修改点】如果开启了污染、故障或负载均衡，强制跳过缓存读取，确保演示效果
-        # 加入 config["lb"] 是为了让你多次点击解析时能立刻看到 IP 在变
-        should_skip_cache = config["pollution"] or config["failure"] or config["lb"]
-        
-        if not should_skip_cache:
-            entry = self.get_cache(qname, qtype)
-            if entry:
-                step = self._build_trace_step("cache", "client", qname, qtype, entry.value, 
-                                            True, 1, self._remaining_ttl(entry))
-                trace.append(step)
-                return entry.value, trace
-
-        # 2. 查询根服务器
+        # 1. 查询根服务器
         latency = self._simulated_latency_ms(unstable_net)
         if self._maybe_fail("root", config["failure"]):
             response = {"status": "TIMEOUT", "records": [], "ttl": 0}
@@ -154,7 +128,7 @@ class DNSEngine:
         root_response = {"status": "OK", "records": ["a.gtld-servers.net"], "ttl": 300}
         trace.append(self._build_trace_step("root-server", "root", qname, qtype, root_response, False, latency, 300))
 
-        # 3. 查询 TLD
+        # 2. 查询 TLD
         latency = self._simulated_latency_ms(unstable_net)
         if self._maybe_fail("tld", config["failure"]):
             response = {"status": "SERVFAIL", "records": [], "ttl": 0}
@@ -164,45 +138,59 @@ class DNSEngine:
         tld_response = {"status": "OK", "records": ["ns1.example.com"], "ttl": 300}
         trace.append(self._build_trace_step("a.gtld-servers.net", "tld", qname, qtype, tld_response, False, latency, 300))
 
-        # 4. 查询权威服务器
+        # 3. 查询权威服务器
         latency = self._simulated_latency_ms(unstable_net)
         if self._maybe_fail("auth", config["failure"]):
             response = {"status": "SERVFAIL", "records": [], "ttl": 0}
             trace.append(self._build_trace_step("ns1.example.com", "auth", qname, qtype, response, False, latency, 0))
             return response, trace
 
-        # 传入 config["lb"] 开关
         response = self._resolve_authoritative(qname, qtype, config["lb"])
-        
-        # 应用污染
         response = self._apply_pollution(qname, qtype, config["pollution"], response)
         
         trace.append(self._build_trace_step("ns1.example.com", "auth", qname, qtype, response, False, latency, response.get("ttl", 0)))
+        return response, trace
 
-        # 写入缓存（只缓存真实 OK 的权威响应，避免将污染结果持久化）
+    def iterative_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
+        """迭代查询逻辑 (模拟客户端直接发起)"""
+        trace: List[dict] = []
+        
+        # 1. 检查 Client Cache
+        should_skip_cache = config["pollution"] or config["failure"] or config["lb"]
+        if not should_skip_cache:
+            entry = self.get_cache('client', qname, qtype)
+            if entry:
+                step = self._build_trace_step("cache", "client", qname, qtype, entry.value, 
+                                            True, 1, self._remaining_ttl(entry))
+                trace.append(step)
+                return entry.value, trace
+
+        # 2. 执行核心解析
+        response, steps = self._core_resolve(qname, qtype, config)
+        trace.extend(steps)
+
+        # 3. 写入 Client Cache
         if response["status"] == "OK" and response.get("ttl", 0) > 0:
-            self.set_cache(qname, qtype, response, response["ttl"])
+            self.set_cache('client', qname, qtype, response, response["ttl"])
 
         return response, trace
 
     def recursive_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
-        """递归查询逻辑"""
+        """递归查询逻辑 (模拟客户端 -> 递归服务器 -> 互联网)"""
         trace: List[dict] = []
         unstable_net = config["failure"]
         latency = self._simulated_latency_ms(unstable_net)
 
-        # 模拟递归服务器故障
+        # 1. 模拟连接递归服务器可能失败
         if self._maybe_fail("recursive-resolver", config["failure"]):
             response = {"status": "SERVFAIL", "records": [], "ttl": 0}
             trace.append(self._build_trace_step("recursive-resolver", "client", qname, qtype, response, False, latency, 0))
             return response, trace
 
-        # 检查递归服务器缓存
-        # 【修改点】同样应用跳过逻辑
+        # 2. 检查 Resolver Cache
         should_skip_cache = config["pollution"] or config["failure"] or config["lb"]
-        
         if not should_skip_cache:
-            entry = self.get_cache(qname, qtype)
+            entry = self.get_cache('resolver', qname, qtype)
             if entry:
                 response = entry.value
                 trace.append(self._build_trace_step("recursive-resolver", "client", qname, qtype, response, 
@@ -212,12 +200,12 @@ class DNSEngine:
         trace.append(self._build_trace_step("recursive-resolver", "client", qname, qtype, 
                                           {"status": "CACHE_MISS", "records": [], "ttl": 0}, False, latency, 0))
 
-        # 调用迭代逻辑
-        response, steps = self.iterative_resolve(qname, qtype, config)
+        # 3. 递归服务器执行核心解析 (Root -> TLD -> Auth)
+        response, steps = self._core_resolve(qname, qtype, config)
         trace.extend(steps)
 
-        # 递归服务器写入缓存（只缓存 OK，避免缓存污染响应）
+        # 4. 写入 Resolver Cache
         if response["status"] == "OK" and response.get("ttl", 0) > 0:
-            self.set_cache(qname, qtype, response, response["ttl"])
+            self.set_cache('resolver', qname, qtype, response, response["ttl"])
 
         return response, trace
