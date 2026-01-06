@@ -209,16 +209,8 @@ function formatDetail(step, type) {
 }
 
 function labelForRecursiveServer(step) {
-  const qname = step.qname || '';
-  const parts = qname.split('.').filter(Boolean);
-  // 为了美观，可以给服务器名字加个换行
-  let name = step.server;
-  
-  if (step.level === 'root') name = 'Root DNS\n(' + step.server + ')';
-  else if (step.level === 'tld') name = 'TLD DNS\n(' + (parts.length ? parts[parts.length - 1] : step.server) + ')';
-  else if (step.level === 'auth') name = 'Auth DNS\n(' + (parts.length >= 2 ? `${parts[parts.length - 2]}.${parts[parts.length - 1]}` : step.server) + ')';
-  
-  return name;
+  // 直接返回实际的服务器名称，不添加额外的标识
+  return step.server;
 }
 
 function buildGraphFromTrace(mode, trace) {
