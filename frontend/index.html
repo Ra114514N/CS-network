@@ -2,43 +2,42 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>AI DNS 解析仿真</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   </head>
   <body>
     <div class="app">
       <header>
         <h1>AI DNS 解析仿真</h1>
-        <p>递归/迭代、缓存、故障与负载均衡，一屏查看。</p>
+        <p>递归/迭代、缓存、故障与负载均衡可视化演示</p>
       </header>
 
       <section class="controls">
         <div class="field">
-          <label for="domain">域名</label>
-          <input id="domain" type="text" value="www.example.com" />
+          <label for="domain">目标域名</label>
+          <input id="domain" type="text" value="www.example.com" placeholder="例如: google.com" autocomplete="off" />
         </div>
         <div class="field">
           <label for="qtype">记录类型</label>
           <select id="qtype">
-            <option value="A">A</option>
-            <option value="AAAA">AAAA</option>
-            <option value="CNAME">CNAME</option>
-            <option value="NS">NS</option>
+            <option value="A">A (IPv4)</option>
+            <option value="AAAA">AAAA (IPv6)</option>
+            <option value="CNAME">CNAME (别名)</option>
+            <option value="NS">NS (名称服务器)</option>
           </select>
         </div>
         <div class="field">
-          <label>模式</label>
-          <!-- 修正：标签与 value 对应关系 -->
-          <!-- 之前这里反了，导致点递归跑的是迭代逻辑 -->
+          <label>解析模式</label>
           <div class="radio-group">
             <label><input type="radio" name="mode" value="recursive" checked /> 递归</label>
             <label><input type="radio" name="mode" value="iterative" /> 迭代</label>
           </div>
         </div>
         <div class="field">
-          <label>场景开关</label>
+          <label>网络场景</label>
           <div class="checkbox-group">
             <label><input id="pollution" type="checkbox" /> 污染</label>
             <label><input id="failure" type="checkbox" /> 故障</label>
@@ -46,52 +45,49 @@
           </div>
         </div>
         <button id="resolve">
-          <span class="btn-text">解析</span>
+          <span class="btn-text">开始解析</span>
         </button>
       </section>
 
       <main class="main-grid">
         <div class="left-stack">
           <div class="graph-panel card">
-            <!-- Loading 遮罩 -->
             <div id="loading-mask" class="loading-mask hidden">
               <div class="radar-spinner"></div>
               <div class="loading-text">正在查询全球 DNS 网络...</div>
             </div>
             
-            <!-- 悬浮提示框 (Tooltip) -->
             <div id="graph-tooltip" class="graph-tooltip hidden"></div>
             
-            <!-- 动画数据包 (新增) -->
             <div id="packet" class="hidden">Packet</div>
 
-            <!-- 图表容器 -->
             <div id="cy"></div>
           </div>
+          
           <div class="info-panels">
-            <section class="card">
-              <h2>解析过程</h2>
+            <section class="card" style="display: flex; flex-direction: column;">
+              <h2>解析日志</h2>
               <div id="trace"></div>
             </section>
             <section class="card">
-              <h2>统计</h2>
+              <h2>本次统计</h2>
               <div id="stats"></div>
             </section>
           </div>
         </div>
 
         <div class="ai-panel card">
-          <h2>AI 诊断表单</h2>
+          <h2>AI 智能诊断</h2>
           <div class="ai-box">
-            <label for="ai-question">向 AI 追加提问</label>
-            <textarea id="ai-question" placeholder="例如：结合本次查询，给出可能的原因、风险和建议。"> </textarea>
+            <label for="ai-question">追加提问</label>
+            <textarea id="ai-question" placeholder="例如：为什么这次解析延迟这么高？存在什么安全风险？"></textarea>
             <div class="ai-actions">
               <button id="ask-ai" type="button">询问 AI</button>
             </div>
           </div>
           <div class="ai-inline">
-            <div class="ai-inline-label">AI 建议</div>
-            <div id="ai"></div>
+            <div class="ai-inline-label">AI 分析建议</div>
+            <div id="ai">等待查询...</div>
           </div>
         </div>
       </main>

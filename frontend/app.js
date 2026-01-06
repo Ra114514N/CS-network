@@ -20,6 +20,7 @@ function initGraph(elements) {
   cy = cytoscape({
     container: document.getElementById('cy'),
     elements,
+    wheelSensitivity: 0.2,
     style: [
       // --- 节点通用样式 ---
       {
@@ -37,7 +38,7 @@ function initGraph(elements) {
           'font-weight': 'bold',
           'text-valign': 'center',
           'text-halign': 'center',
-          width: 120,  // 加宽节点，模仿 demo.html
+          width: 120,
           height: 40,
           'transition-property': 'background-color, border-color, border-width, width, height',
           'transition-duration': '0.3s',
@@ -47,52 +48,31 @@ function initGraph(elements) {
           'shadow-offset-y': 1
         },
       },
-      // --- 角色特定样式 (仿 demo.html) ---
+      // --- 角色特定样式 ---
       {
         selector: 'node[type="client"]',
-        style: {
-          'background-color': '#e7f3fe', // 浅蓝
-          'border-color': '#b0c4de'
-        }
+        style: { 'background-color': '#e7f3fe', 'border-color': '#b0c4de' }
       },
       {
         selector: 'node[type="resolver"]',
-        style: {
-          'background-color': '#fffacd', // 柠檬黄 (递归 DNS)
-          'border-color': '#e0d8a0'
-        }
+        style: { 'background-color': '#fffacd', 'border-color': '#e0d8a0' }
       },
       {
         selector: 'node[id="local-server"]',
-        style: {
-          'background-color': '#ffebcd', // 米色 (本地服务器)
-          'border-color': '#d8c7a9',
-          'border-width': 2,
-          'font-size': 13
-        }
+        style: { 'background-color': '#ffebcd', 'border-color': '#d8c7a9', 'border-width': 2 }
       },
       {
         selector: 'node[level="root"]',
-        style: {
-          'background-color': '#f0e68c', // 卡其色 (根 DNS)
-          'border-color': '#d0c66c'
-        }
+        style: { 'background-color': '#f0e68c', 'border-color': '#d0c66c' }
       },
       {
         selector: 'node[level="tld"]',
-        style: {
-          'background-color': '#d2fbd2', // 浅绿 (TLD DNS)
-          'border-color': '#a0d8a0'
-        }
+        style: { 'background-color': '#d2fbd2', 'border-color': '#a0d8a0' }
       },
       {
         selector: 'node[level="auth"]',
-        style: {
-          'background-color': '#add8e6', // 蓝色 (权威 DNS)
-          'border-color': '#80b8c6'
-        }
+        style: { 'background-color': '#add8e6', 'border-color': '#80b8c6' }
       },
-
       // --- 连线样式 ---
       {
         selector: 'edge',
@@ -112,48 +92,30 @@ function initGraph(elements) {
           'transition-duration': '0.3s'
         },
       },
-      // --- 交互与动画高亮 ---
       {
         selector: 'edge.hovered',
         style: {
-          width: 3,
-          'line-color': '#1890ff',
-          'target-arrow-color': '#1890ff',
-          color: '#1890ff',
-          'font-weight': 'bold',
-          'z-index': 1000,
-          'opacity': 1
+          width: 3, 'line-color': '#1890ff', 'target-arrow-color': '#1890ff',
+          color: '#1890ff', 'font-weight': 'bold', 'z-index': 1000, 'opacity': 1
         }
       },
       {
         selector: '.highlight-success',
         style: {
-          'line-color': '#52c41a',
-          'target-arrow-color': '#52c41a',
-          'opacity': 1,
-          width: 2,
-          color: '#333'
+          'line-color': '#52c41a', 'target-arrow-color': '#52c41a', 'opacity': 1, width: 2, color: '#333'
         },
       },
       {
         selector: '.highlight-error',
         style: {
-          'line-color': '#ff4d4f',
-          'target-arrow-color': '#ff4d4f',
-          'opacity': 1,
-          width: 2,
-          color: '#ff4d4f'
+          'line-color': '#ff4d4f', 'target-arrow-color': '#ff4d4f', 'opacity': 1, width: 2, color: '#ff4d4f'
         },
       },
       {
         selector: '.node-visited',
-        style: {
-          'border-width': 2,
-          'border-style': 'solid', // 确保边框实线
-        }
+        style: { 'border-width': 2, 'border-style': 'solid' }
       }
     ],
-    // 使用 dagre 布局或者 breadthfirst，breadthfirst 对层级展示较好
     layout: { name: 'breadthfirst', directed: true, padding: 20 },
   });
 
@@ -167,20 +129,25 @@ function initGraph(elements) {
   });
 
   cy.on('mouseout', 'edge', function(evt) {
-    const edge = evt.target;
-    edge.removeClass('hovered');
+    evt.target.removeClass('hovered');
     hideTooltip();
   });
   
   cy.on('resize', () => {
     if(!isAnimating) packetEl.classList.add('hidden');
+    // 在非动画状态下，图表尺寸变化时重新适配视野
+    if(!isAnimating) cy.fit(30);
   });
 }
 
 function showTooltip(pos, text) {
   tooltipEl.textContent = text;
+  // 简单的边界检查，防止 Tooltip 超出顶部
+  let top = pos.y - 10;
+  if (top < 50) top = pos.y + 40;
+  
   tooltipEl.style.left = `${pos.x}px`;
-  tooltipEl.style.top = `${pos.y - 10}px`;
+  tooltipEl.style.top = `${top}px`;
   tooltipEl.classList.remove('hidden');
 }
 
@@ -192,6 +159,58 @@ function summarizeResponse(step) {
   if (!step || !step.response) return 'NO_RESPONSE';
   if (typeof step.response === 'string') return step.response;
   return step.response.status || 'UNKNOWN';
+}
+
+function normalizeServerName(server) {
+  if (!server) return '';
+  return server.startsWith('local->') ? server.slice(7) : server;
+}
+
+function roleFromStep(step, mode) {
+  const server = normalizeServerName(step.server || '');
+  if (step.level === 'root' || server.includes('root')) return '根DNS';
+  if (step.level === 'tld' || server.includes('gtld') || server.includes('tld')) return '顶级域DNS';
+  if (step.level === 'auth') return '权威DNS';
+  if (step.server === 'recursive-resolver') return '递归DNS';
+  if (step.server === 'local-server' || step.level === 'local') return '本地DNS';
+  return mode === 'recursive' ? '递归DNS' : '本地DNS';
+}
+
+function formatRecords(step) {
+  const records = step?.response?.records || [];
+  if (!records.length) return '无';
+  return records.join(', ');
+}
+
+function formatTraceMessage(step, idx, mode) {
+  const status = summarizeResponse(step);
+  const serverName = normalizeServerName(step.server || '');
+  const role = roleFromStep(step, mode);
+  const roleWithServer = serverName ? `${role} (${serverName})` : role;
+  const records = formatRecords(step);
+
+  if (step.server && step.server.includes('cache')) {
+    return `步骤 ${idx + 1}: 检查本地缓存（${step.cache_hit ? '命中' : '未命中'}），记录: ${records}`;
+  }
+
+  if (step.level === 'client') {
+    if (status === 'CACHE_MISS') {
+      return `步骤 ${idx + 1}: ${role}检查缓存未命中，查询 "${step.qname}"`;
+    }
+    if (step.cache_hit) {
+      return `步骤 ${idx + 1}: ${role}缓存命中，返回记录: ${records}`;
+    }
+    if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN'].includes(status)) {
+      return `步骤 ${idx + 1}: ${role}返回错误 ${status}`;
+    }
+    return `步骤 ${idx + 1}: ${role}返回结果: ${records}`;
+  }
+
+  if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN'].includes(status)) {
+    return `步骤 ${idx + 1}: ${roleWithServer}响应异常：${status}`;
+  }
+
+  return `步骤 ${idx + 1}: ${roleWithServer}收到查询 "${step.qname}"，返回: ${records}`;
 }
 
 function formatDetail(step, type) {
@@ -208,33 +227,15 @@ function formatDetail(step, type) {
   }
 }
 
-function labelForRecursiveServer(step) {
-  const qname = step.qname || '';
-  const parts = qname.split('.').filter(Boolean);
-  // 为了美观，可以给服务器名字加个换行
-  let name = step.server;
-  
-  if (step.level === 'root') name = 'Root DNS\n(' + step.server + ')';
-  else if (step.level === 'tld') name = 'TLD DNS\n(' + (parts.length ? parts[parts.length - 1] : step.server) + ')';
-  else if (step.level === 'auth') name = 'Auth DNS\n(' + (parts.length >= 2 ? `${parts[parts.length - 2]}.${parts[parts.length - 1]}` : step.server) + ')';
-  
-  return name;
-}
-
 function buildGraphFromTrace(mode, trace) {
   const nodes = [];
   const edges = [];
   const pathEdgeIds = [];
   const nodeSet = new Set();
-  const qname = trace[0]?.qname || '';
-  const qtype = trace[0]?.qtype || '';
 
-  // 增加 level 参数，用于样式匹配
   function ensureNode(id, label, type, level) {
     if (nodeSet.has(id)) return;
     nodeSet.add(id);
-    // data 里的 type 用于区分 client/resolver/server/local
-    // data 里的 level 用于区分 root/tld/auth/local
     nodes.push({ data: { id, label, type, level } });
   }
 
@@ -249,125 +250,87 @@ function buildGraphFromTrace(mode, trace) {
   // 1. 初始化客户端
   ensureNode('client', '客户端', 'client', 'client');
   
-  // 2. 初始化本地服务器 (仅递归模式)
+  // 2. 初始化中间节点
   if (normalizedMode === 'recursive') {
     ensureNode('resolver', '本地服务器', 'resolver', 'resolver');
   }
-  
-  // 3. 初始化本地服务器 (仅迭代模式)
   if (normalizedMode === 'iterative') {
     ensureNode('local-server', '本地服务器', 'resolver', 'local');
   }
 
-  // 4. 检查是否有缓存命中
+  // 3. 构建路径
   const hasCacheHit = trace.some(step => 
-    step.cache_hit || 
-    (step.server && step.server.includes('cache')) ||
-    (step.response && step.response.cache_hit)
+    step.cache_hit || (step.server && step.server.includes('cache')) || (step.response && step.response.cache_hit)
   );
   
-  // 5. 检查是否有完整的解析步骤（Root/TLD/Auth）
   const hasFullResolution = trace.some(step => 
     step.server && (step.server.includes('root') || step.server.includes('tld') || step.server.includes('auth'))
   );
 
   if (normalizedMode === 'iterative') {
     if (hasCacheHit && !hasFullResolution) {
-      // 缓存命中：只显示客户端和本地服务器之间的通信
-      // 客户端 -> 本地服务器
       addEdge('client', 'local-server', 'Query', '客户端请求本地服务器', 'path-client-local');
-      
-      // 本地服务器 -> 客户端
-      addEdge('local-server', 'client', 'Result', '本地服务器返回结果（缓存命中）', 'path-local-client');
+      addEdge('local-server', 'client', 'Result', '缓存命中返回', 'path-local-client');
     } else {
-      // 缓存未命中：显示完整的解析路径
-      // 客户端 -> 本地服务器
       addEdge('client', 'local-server', 'Query', '客户端请求本地服务器', 'path-client-local');
       
-      // 过滤服务器步骤，包括 root/tld/auth/local，并排除cache相关步骤
       let serverSteps = trace.filter((step) => 
-        ['root', 'tld', 'auth', 'local'].includes(step.level) && 
-        !step.server.includes('cache')
+        ['root', 'tld', 'auth', 'local'].includes(step.level) && !step.server.includes('cache')
       );
       
-      // 处理本地服务器的子步骤
       let actualServerSteps = [];
       for (const step of serverSteps) {
         if (step.level === 'local' && step.server.startsWith('local->')) {
-          // 提取实际服务器信息
           const actualServer = step.server.substring(7);
           actualServerSteps.push({
             ...step,
             server: actualServer,
-            level: step.server.includes('root') ? 'root' : 
-                   step.server.includes('tld') ? 'tld' : 'auth'
+            level: step.server.includes('root') ? 'root' : step.server.includes('tld') ? 'tld' : 'auth'
           });
         } else {
           actualServerSteps.push(step);
         }
       }
 
-      // 初始化各级服务器节点
       actualServerSteps.forEach((step) => {
         const serverId = `server:${step.server}`;
         if (!nodeSet.has(serverId)) {
-          const label = normalizedMode === 'recursive' ? labelForRecursiveServer(step) : step.server;
-          // 传入 step.level ('root', 'tld', 'auth') 以应用不同颜色
-          ensureNode(serverId, label, 'server', step.level);
+          ensureNode(serverId, step.server, 'server', step.level);
         }
       });
       
-      // 本地服务器 -> 各级服务器 -> 本地服务器
       actualServerSteps.forEach((step, idx) => {
         const target = `server:${step.server}`;
-        const labelReq = `Q: ${step.qtype}`;
-        const labelResp = `R: ${summarizeResponse(step)}`;
-        
-        const detailReq = formatDetail(step, 'req');
-        const detailResp = formatDetail(step, 'resp');
-
-        // 本地服务器 -> 目标服务器
-        addEdge('local-server', target, labelReq, detailReq, `path-${idx}-req`);
-        // 目标服务器 -> 本地服务器
-        addEdge(target, 'local-server', labelResp, detailResp, `path-${idx}-resp`);
+        addEdge('local-server', target, `Q: ${step.qtype}`, formatDetail(step, 'req'), `path-${idx}-req`);
+        addEdge(target, 'local-server', `R: ${summarizeResponse(step)}`, formatDetail(step, 'resp'), `path-${idx}-resp`);
       });
       
-      // 本地服务器 -> 客户端
-      addEdge('local-server', 'client', 'Result', '本地服务器返回结果', 'path-local-client');
+      addEdge('local-server', 'client', 'Result', '返回最终结果', 'path-local-client');
     }
   } else {
-    // 递归模式：保持原有逻辑
-    // 过滤服务器步骤，包括 root/tld/auth/local
+    // 递归模式
     let serverSteps = trace.filter((step) => ['root', 'tld', 'auth', 'local'].includes(step.level));
-    
-    // 处理本地服务器的子步骤
     let actualServerSteps = [];
     for (const step of serverSteps) {
       if (step.level === 'local' && step.server.startsWith('local->')) {
-        // 提取实际服务器信息
         const actualServer = step.server.substring(7);
         actualServerSteps.push({
           ...step,
           server: actualServer,
-          level: step.server.includes('root') ? 'root' : 
-                 step.server.includes('tld') ? 'tld' : 'auth'
+          level: step.server.includes('root') ? 'root' : step.server.includes('tld') ? 'tld' : 'auth'
         });
       } else {
         actualServerSteps.push(step);
       }
     }
 
-    // 初始化各级服务器节点
     actualServerSteps.forEach((step) => {
       const serverId = `server:${step.server}`;
       if (!nodeSet.has(serverId)) {
-        const label = normalizedMode === 'recursive' ? labelForRecursiveServer(step) : step.server;
-        // 传入 step.level ('root', 'tld', 'auth') 以应用不同颜色
-        ensureNode(serverId, label, 'server', step.level);
+        ensureNode(serverId, step.server, 'server', step.level);
       }
     });
 
-    // Recursive Mode (保持不变)
     addEdge('client', 'resolver', 'Query', 'Initial Query', 'path-client-resolver');
 
     if (actualServerSteps.length > 0) {
@@ -385,8 +348,7 @@ function buildGraphFromTrace(mode, trace) {
       for (let i = actualServerSteps.length - 1; i >= 0; i--) {
         const from = `server:${actualServerSteps[i].server}`;
         const to = i > 0 ? `server:${actualServerSteps[i - 1].server}` : 'resolver';
-        const status = summarizeResponse(actualServerSteps[i]);
-        addEdge(from, to, status, formatDetail(actualServerSteps[i], 'resp'), `path-resp-${i}`);
+        addEdge(from, to, summarizeResponse(actualServerSteps[i]), formatDetail(actualServerSteps[i], 'resp'), `path-resp-${i}`);
       }
     }
     addEdge('resolver', 'client', 'Result', 'Resolution Complete', 'path-resolver-client');
@@ -401,11 +363,23 @@ async function movePacket(sourceNodeId, targetNodeId, label, isError) {
 
   if (sourceNode.empty() || targetNode.empty()) return;
 
+  // 必须获取 renderedPosition (屏幕坐标) 而不是 position (模型坐标)
   const p1 = sourceNode.renderedPosition();
   const p2 = targetNode.renderedPosition();
 
-  const offsetX = packetEl.offsetWidth / 2;
-  const offsetY = packetEl.offsetHeight / 2;
+  // 获取容器相对于视口的偏移，防止 packet 错位
+  const containerRect = document.getElementById('cy').getBoundingClientRect();
+  
+  // 计算相对于 graph-panel 的坐标
+  const offsetX = containerRect.left;
+  const offsetY = containerRect.top;
+
+  // packet 是 fixed/absolute 定位于 graph-panel 内或 body 内
+  // 如果 packet 是 absolute 于 .graph-panel (position: relative)，则直接使用 p1.x, p1.y
+  // 这里假设 packet 是 absolute 于 .graph-panel
+  
+  const packetW = packetEl.offsetWidth || 60;
+  const packetH = packetEl.offsetHeight || 28;
 
   packetEl.textContent = label;
   packetEl.className = ''; 
@@ -418,116 +392,91 @@ async function movePacket(sourceNodeId, targetNodeId, label, isError) {
   if (isError) packetEl.classList.add('packet-error');
 
   packetEl.style.transition = 'none';
-  packetEl.style.left = `${p1.x - offsetX}px`;
-  packetEl.style.top = `${p1.y - offsetY}px`;
+  packetEl.style.left = `${p1.x - packetW/2}px`;
+  packetEl.style.top = `${p1.y - packetH/2}px`;
   packetEl.style.opacity = '1';
   packetEl.classList.remove('hidden');
 
+  // 强制重绘
   void packetEl.offsetWidth;
 
-  const duration = 800; 
+  const duration = 600; 
   packetEl.style.transition = `top ${duration}ms ease-in-out, left ${duration}ms ease-in-out, opacity 0.2s`;
   
-  packetEl.style.left = `${p2.x - offsetX}px`;
-  packetEl.style.top = `${p2.y - offsetY}px`;
+  packetEl.style.left = `${p2.x - packetW/2}px`;
+  packetEl.style.top = `${p2.y - packetH/2}px`;
 
   await delay(duration);
 }
 
 async function animateResolution(mode, trace, isError) {
-  if (packetHideTimer) {
-    clearTimeout(packetHideTimer);
-    packetHideTimer = null;
-  }
+  if (packetHideTimer) clearTimeout(packetHideTimer);
 
   const built = buildGraphFromTrace(mode, trace);
-  const elements = built.elements;
   
   if (!cy) {
-    initGraph(elements);
+    initGraph(built.elements);
   } else {
     cy.elements().remove();
-    cy.add(elements);
+    cy.add(built.elements);
   }
   
-  // 等待图形初始化完成
-  await delay(100);
+  // 等待 DOM 渲染
+  await delay(50);
   
+  // --- 关键修改：动态响应式布局 ---
   if (mode === 'iterative') {
-    // 迭代模式：自定义布局，分成左中右三部分
-    
-    // 固定位置坐标
+    const w = cy.width();
+    const h = cy.height();
+    const xLeft = w * 0.15;
+    const xMid = w * 0.5;
+    const xRight = w * 0.85;
+    const yCenter = h / 2;
+
     const positions = {
-      'client': { x: 100, y: 250 },       // 左侧：客户端
-      'local-server': { x: 300, y: 250 }  // 中间：本地服务器
+      'client': { x: xLeft, y: yCenter },
+      'local-server': { x: xMid, y: yCenter }
     };
     
-    // 设置客户端和本地服务器的位置
     cy.nodes().forEach(node => {
-      const id = node.id();
-      if (positions[id]) {
-        node.position(positions[id]);
-      }
+      if (positions[node.id()]) node.position(positions[node.id()]);
     });
     
-    // 处理其他服务器节点（右部分）
-    const otherNodes = cy.nodes().filter(node => 
-      node.id() !== 'client' && node.id() !== 'local-server'
-    );
-    
-    // 按查询顺序排列右侧服务器节点
-    const serverOrder = ['root-server', 'a.gtld-servers.net', 'ns1.example.com'];
-    
+    const otherNodes = cy.nodes().filter(n => n.id() !== 'client' && n.id() !== 'local-server');
+    const totalHeight = otherNodes.length * 100;
+    const startY = Math.max(60, yCenter - totalHeight / 2); // 保证不顶格
+
     otherNodes.forEach((node, idx) => {
-      // 找到节点在查询顺序中的位置
-      const serverName = node.data('label').replace(/\n.*$/, '');
-      let orderIdx = serverOrder.indexOf(serverName);
-      if (orderIdx === -1) orderIdx = idx;
-      
-      // 设置右侧位置，从上往下排列
-      node.position({
-        x: 600,  // 右侧固定X坐标
-        y: 100 + orderIdx * 120  // 从上往下排列，间距120px
-      });
+      node.position({ x: xRight, y: startY + idx * 100 });
     });
     
-    // 调整视图以适应所有节点
-    cy.fit(50);
+    cy.fit(40);
   } else {
-    // 递归模式：保持原有布局
-    const layout = { 
-      name: 'breadthfirst', 
-      directed: true, 
-      padding: 40, 
-      spacingFactor: 1.3, 
-      avoidOverlap: true 
-    };
-    
-    const layoutInstance = cy.layout(layout);
-    const layoutDone = new Promise(resolve => layoutInstance.one('layoutstop', resolve));
-    layoutInstance.run();
-    await layoutDone;
+    const layout = cy.layout({ 
+      name: 'breadthfirst', directed: true, padding: 40, spacingFactor: 1.2, avoidOverlap: true 
+    });
+    layout.run();
   }
   
-  await delay(200);
+  await delay(300); // 等待布局稳定
 
   traceEl.innerHTML = '';
-  const traceItems = trace.map((step, idx) => {
-    const div = document.createElement('div');
-    div.className = 'trace-line';
-    const response = step.response.status || JSON.stringify(step.response);
-    div.textContent = `${idx + 1}. ${step.level}@${step.server} | ${step.qname} -> ${response} (${step.latency_ms}ms)`;
-    traceEl.appendChild(div);
-    return div;
-  });
+  const qname = trace[0]?.qname || '';
+  if (qname) appendTraceLine(`开始: 查询域名 "${qname}"`);
 
+  const traceItems = new Array(trace.length).fill(null);
+  let lastTraceIdx = -1;
+
+  // --- 关键修改：锁定交互 ---
   isAnimating = true;
-  animationController = new AbortController();
+  if(cy) {
+    cy.userZoomingEnabled(false);
+    cy.userPanningEnabled(false);
+    cy.boxSelectionEnabled(false);
+  }
+  
   const signal = animationController.signal;
   const edgeIds = built.pathEdgeIds;
-
-  packetEl.classList.add('hidden');
-  packetEl.style.opacity = '0';
 
   try {
     const ratio = traceItems.length > 0 ? edgeIds.length / traceItems.length : 1;
@@ -548,17 +497,20 @@ async function animateResolution(mode, trace, isError) {
 
         await movePacket(sourceId, targetId, label, errorOnThisStep);
 
-        if (errorOnThisStep) {
-            edge.addClass('highlight-error');
-        } else {
-            edge.addClass('highlight-success');
-        }
+        if (errorOnThisStep) edge.addClass('highlight-error');
+        else edge.addClass('highlight-success');
         
         edge.target().addClass('node-visited');
 
         const traceIdx = Math.min(Math.floor(i / ratio), traceItems.length - 1);
+        if (traceIdx !== lastTraceIdx && trace[traceIdx]) {
+          const message = formatTraceMessage(trace[traceIdx], traceIdx, mode);
+          traceItems[traceIdx] = appendTraceLine(message);
+          lastTraceIdx = traceIdx;
+        }
+
         if (traceItems[traceIdx]) {
-          traceItems.forEach(t => t.classList.remove('active'));
+          traceItems.forEach(t => t && t.classList.remove('active'));
           traceItems[traceIdx].classList.add('active');
           if (errorOnThisStep) traceItems[traceIdx].classList.add('error');
           traceItems[traceIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -570,9 +522,26 @@ async function animateResolution(mode, trace, isError) {
   } catch (err) {
     console.log("Animation interrupted", err);
   } finally {
+    // --- 恢复交互 ---
     isAnimating = false;
+    if(cy) {
+      cy.userZoomingEnabled(true);
+      cy.userPanningEnabled(true);
+      cy.boxSelectionEnabled(true);
+    }
     packetEl.style.opacity = '0';
     packetHideTimer = setTimeout(() => packetEl.classList.add('hidden'), 300);
+  }
+
+  if (trace.length > 0) {
+    const finalStep = trace[trace.length - 1];
+    const finalStatus = summarizeResponse(finalStep);
+    const finalRecords = formatRecords(finalStep);
+    if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN'].includes(finalStatus)) {
+      appendTraceLine(`完成: 解析失败，状态 ${finalStatus}`);
+    } else {
+      appendTraceLine(`完成: 客户端收到结果 ${finalRecords}`);
+    }
   }
 }
 
@@ -581,47 +550,53 @@ function renderStats(stats, result, qtype) {
 
   let resultDisplay = '';
   if (result && result.records && result.records.length > 0) {
-    resultDisplay = `<div style="margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee;">
-      <strong>解析结果 (${qtype}):</strong><br>
-      <span style="color: #1890ff; font-weight: bold; font-size: 1.1em;">${result.records.join('<br>')}</span>
+    resultDisplay = `<div style="grid-column: span 2; background: #e6f7ff; color: #0050b3; border-color: #91d5ff;">
+      📝 解析结果: ${result.records.join(', ')}
     </div>`;
   } else {
-    resultDisplay = `<div style="margin-bottom: 10px; color: #999;">解析结果: (无数据)</div>`;
+    resultDisplay = `<div style="grid-column: span 2; color: #999;">无解析记录</div>`;
   }
 
   const statusClass = stats.is_error ? 'color: #ff4d4f' : 'color: #52c41a';
 
   statsEl.innerHTML = `
     ${resultDisplay}
-    <div>状态: <strong style="${statusClass}">${stats.status || 'UNKNOWN'}</strong></div>
-    <div>命中率: ${(stats.hit_rate * 100).toFixed(0)}%</div>
-    <div>总耗时: ${stats.total_time_ms} ms</div>
-    <div>失败率: ${(stats.failure_rate * 100).toFixed(0)}%</div>
+    <div>状态 <br><strong style="${statusClass}">${stats.status || 'UNKNOWN'}</strong></div>
+    <div>总耗时 <br><strong>${stats.total_time_ms} ms</strong></div>
+    <div>命中率 <br><strong>${(stats.hit_rate * 100).toFixed(0)}%</strong></div>
+    <div>失败率 <br><strong>${(stats.failure_rate * 100).toFixed(0)}%</strong></div>
   `;
 }
 
 function renderAI(text) {
-  aiEl.textContent = text;
+  if (window.marked && typeof window.marked.parse === 'function') {
+    aiEl.innerHTML = window.marked.parse(text || '');
+  } else {
+    aiEl.textContent = text;
+  }
+}
+
+function appendTraceLine(text) {
+  const p = document.createElement('div');
+  p.className = 'trace-line';
+  p.textContent = text;
+  traceEl.appendChild(p);
+  return p;
 }
 
 function setLoading(isLoading) {
   if (isLoading) {
-    if (packetHideTimer) {
-      clearTimeout(packetHideTimer);
-      packetHideTimer = null;
-    }
-    
+    if (packetHideTimer) clearTimeout(packetHideTimer);
     resolveBtn.disabled = true;
     resolveBtn.innerHTML = '<span class="btn-text">解析中...</span>';
     loadingMask.classList.remove('hidden');
-    
     if (isAnimating) {
       animationController.abort();
       packetEl.classList.add('hidden');
     }
   } else {
     resolveBtn.disabled = false;
-    resolveBtn.innerHTML = '<span class="btn-text">解析</span>';
+    resolveBtn.innerHTML = '<span class="btn-text">开始解析</span>';
     loadingMask.classList.add('hidden');
   }
 }
@@ -636,6 +611,11 @@ async function resolve() {
     lb: document.getElementById('lb').checked,
   };
 
+  if(!domain) {
+    alert("请输入域名");
+    return;
+  }
+
   setLoading(true);
 
   try {
@@ -645,50 +625,47 @@ async function resolve() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain, qtype, mode, scenarios }),
       }),
-      delay(800)
+      delay(600) // 最小 Loading 时间，防止闪烁
     ]);
 
     const data = await res.json();
     const renderMode = data.mode || mode;
 
     const status = (data.stats && data.stats.status) || 'UNKNOWN';
-    const isError =
-      (data.stats && data.stats.is_error) ||
-      (data.stats && data.stats.failure_rate > 0) ||
-      ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN'].includes(status);
+    const isError = (data.stats && data.stats.is_error) || ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN'].includes(status);
 
     setLoading(false);
 
     renderStats(data.stats, data.result, qtype);
-    renderAI('AI 未查询，点击"询问 AI"按钮后获取建议。');
+    renderAI('等待查询...');
 
     await animateResolution(renderMode, data.trace, isError);
     
     lastContext = {
-      domain,
-      qtype,
-      mode: renderMode,
-      scenarios,
-      stats: data.stats,
-      result: data.result,
-      trace: data.trace,
+      domain, qtype, mode: renderMode, scenarios, stats: data.stats, result: data.result, trace: data.trace,
     };
 
   } catch (err) {
     console.error(err);
     setLoading(false);
-    alert('请求失败，请检查后端服务是否启动');
+    // --- 关键修改：优雅错误展示 ---
+    statsEl.innerHTML = `
+      <div style="grid-column: span 2; background: #fff1f0; border: 1px solid #ffa39e; padding: 10px; border-radius: 6px; color: #cf1322;">
+        <strong>请求失败</strong>: 无法连接到服务器。<br>
+        <small style="opacity:0.8">${err.message}</small>
+      </div>
+    `;
   }
 }
 
 async function askAI() {
   if (!lastContext) {
-    renderAI('请先点击“解析”获得最新的查询上下文。');
+    renderAI('请先点击“开始解析”获得查询数据。');
     return;
   }
 
   const question = (aiQuestionInput.value || '').trim() || '请结合以上查询信息给出简要建议。';
-  renderAI('AI 正在分析中…');
+  renderAI('AI 正在分析网络链路...');
   askAiBtn.disabled = true;
 
   try {
@@ -708,3 +685,7 @@ async function askAI() {
 
 resolveBtn.addEventListener('click', resolve);
 askAiBtn.addEventListener('click', askAI);
+// 支持回车查询
+document.getElementById('domain').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') resolve();
+});

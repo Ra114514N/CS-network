@@ -94,61 +94,122 @@ class DNSEngine:
         }
 
     def _resolve_authoritative(self, qname: str, qtype: str, use_lb: bool) -> dict:
-        zone = ZONE_DATA.get("example.com", {})
-        qtype_data = zone.get(qtype, {})
-        record = qtype_data.get(qname)
+        # 尝试从ZONE_DATA中查找对应的区域
+        # 先尝试完整域名，再逐级向上查找
+        parts = qname.split('.')
+        for i in range(len(parts)):
+            domain = '.'.join(parts[i:])
+            if domain in ZONE_DATA:
+                zone = ZONE_DATA[domain]
+                qtype_data = zone.get(qtype, {})
+                record = qtype_data.get(qname)
+                
+                if record:
+                    records = record["records"]
+                    ttl = record["ttl"]
+                    
+                    if use_lb and len(records) > 1:
+                        picked = self._lb_pick(qname, records)
+                        return {"status": "OK", "records": [picked], "ttl": ttl}
+                        
+                    return {"status": "OK", "records": records, "ttl": ttl}
         
-        if not record:
-            return {"status": "NXDOMAIN", "records": [], "ttl": 0}
-
-        records = record["records"]
-        ttl = record["ttl"]
-
-        if use_lb and len(records) > 1:
-            picked = self._lb_pick(qname, records)
-            return {"status": "OK", "records": [picked], "ttl": ttl}
-            
-        return {"status": "OK", "records": records, "ttl": ttl}
+        return {"status": "NXDOMAIN", "records": [], "ttl": 0}
 
     def _core_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
         """
         核心解析逻辑（不包含缓存检查）
-        负责 Root -> TLD -> Auth 的遍历过程
+        负责根据域名动态生成解析路径，支持多级域名
         """
         trace: List[dict] = []
         unstable_net = config["failure"]
 
-        # 1. 查询根服务器
+        # 解析域名，获取域名的各个部分
+        parts = qname.split('.')
+        
+        # 1. 根服务器解析（获取顶级域的NS记录）
+        top_level = parts[-1] if parts else ""
+        current_server = "root-server"
+        current_level = "root"
         latency = self._simulated_latency_ms(unstable_net)
+        
         if self._maybe_fail("root", config["failure"]):
             response = {"status": "TIMEOUT", "records": [], "ttl": 0}
-            trace.append(self._build_trace_step("root-server", "root", qname, qtype, response, False, latency, 0))
+            trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
             return response, trace
-
-        root_response = {"status": "OK", "records": ["a.gtld-servers.net"], "ttl": 300}
-        trace.append(self._build_trace_step("root-server", "root", qname, qtype, root_response, False, latency, 300))
-
-        # 2. 查询 TLD
-        latency = self._simulated_latency_ms(unstable_net)
-        if self._maybe_fail("tld", config["failure"]):
-            response = {"status": "SERVFAIL", "records": [], "ttl": 0}
-            trace.append(self._build_trace_step("a.gtld-servers.net", "tld", qname, qtype, response, False, latency, 0))
+        
+        if top_level in ZONE_DATA["root"]["NS"]:
+            root_response = ZONE_DATA["root"]["NS"][top_level]
+            response = {"status": "OK", "records": root_response["records"], "ttl": root_response["ttl"]}
+            next_server = root_response["records"][0]
+        else:
+            response = {"status": "NXDOMAIN", "records": [], "ttl": 0}
+            trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
             return response, trace
-
-        tld_response = {"status": "OK", "records": ["ns1.example.com"], "ttl": 300}
-        trace.append(self._build_trace_step("a.gtld-servers.net", "tld", qname, qtype, tld_response, False, latency, 300))
-
-        # 3. 查询权威服务器
+        
+        trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, response.get("ttl", 0)))
+        
+        # 2. 顶级域服务器解析（获取二级域的NS记录）
+        if len(parts) >= 2:
+            second_level = '.'.join(parts[-2:])
+            current_server = next_server
+            current_level = "tld"
+            latency = self._simulated_latency_ms(unstable_net)
+            
+            if self._maybe_fail("tld", config["failure"]):
+                response = {"status": "TIMEOUT", "records": [], "ttl": 0}
+                trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
+                return response, trace
+            
+            if top_level in ZONE_DATA and second_level in ZONE_DATA[top_level]["NS"]:
+                tld_response = ZONE_DATA[top_level]["NS"][second_level]
+                response = {"status": "OK", "records": tld_response["records"], "ttl": tld_response["ttl"]}
+                next_server = tld_response["records"][0]
+            else:
+                response = {"status": "NXDOMAIN", "records": [], "ttl": 0}
+                trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
+                return response, trace
+            
+            trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, response.get("ttl", 0)))
+        
+        # 3. 根据域名结构决定是否查询三级域的NS记录
+        if len(parts) >= 3:
+            second_level = '.'.join(parts[-2:])
+            third_level = '.'.join(parts[-3:])
+            
+            # 检查是否需要查询三级域的NS记录
+            # 如果二级域在ZONE_DATA中，且包含三级域的NS记录，则查询
+            if second_level in ZONE_DATA and "NS" in ZONE_DATA[second_level] and third_level in ZONE_DATA[second_level]["NS"]:
+                current_server = next_server
+                current_level = "auth"
+                latency = self._simulated_latency_ms(unstable_net)
+                
+                if self._maybe_fail("auth", config["failure"]):
+                    response = {"status": "TIMEOUT", "records": [], "ttl": 0}
+                    trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
+                    return response, trace
+                
+                auth_response = ZONE_DATA[second_level]["NS"][third_level]
+                response = {"status": "OK", "records": auth_response["records"], "ttl": auth_response["ttl"]}
+                next_server = auth_response["records"][0]
+                
+                trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, response.get("ttl", 0)))
+        
+        # 4. 权威服务器解析（获取最终记录）
+        current_server = next_server
+        current_level = "auth"
         latency = self._simulated_latency_ms(unstable_net)
+        
         if self._maybe_fail("auth", config["failure"]):
-            response = {"status": "SERVFAIL", "records": [], "ttl": 0}
-            trace.append(self._build_trace_step("ns1.example.com", "auth", qname, qtype, response, False, latency, 0))
+            response = {"status": "TIMEOUT", "records": [], "ttl": 0}
+            trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, 0))
             return response, trace
-
+        
         response = self._resolve_authoritative(qname, qtype, config["lb"])
         response = self._apply_pollution(qname, qtype, config["pollution"], response)
         
-        trace.append(self._build_trace_step("ns1.example.com", "auth", qname, qtype, response, False, latency, response.get("ttl", 0)))
+        trace.append(self._build_trace_step(current_server, current_level, qname, qtype, response, False, latency, response.get("ttl", 0)))
+        
         return response, trace
 
     def iterative_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
