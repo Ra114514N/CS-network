@@ -63,6 +63,15 @@ function initGraph(elements) {
         }
       },
       {
+        selector: 'node[id="local-server"]',
+        style: {
+          'background-color': '#ffebcd', // 米色 (本地服务器)
+          'border-color': '#d8c7a9',
+          'border-width': 2,
+          'font-size': 13
+        }
+      },
+      {
         selector: 'node[level="root"]',
         style: {
           'background-color': '#f0e68c', // 卡其色 (根 DNS)
@@ -224,8 +233,8 @@ function buildGraphFromTrace(mode, trace) {
   function ensureNode(id, label, type, level) {
     if (nodeSet.has(id)) return;
     nodeSet.add(id);
-    // data 里的 type 用于区分 client/resolver/server
-    // data 里的 level 用于区分 root/tld/auth
+    // data 里的 type 用于区分 client/resolver/server/local
+    // data 里的 level 用于区分 root/tld/auth/local
     nodes.push({ data: { id, label, type, level } });
   }
 
@@ -240,56 +249,144 @@ function buildGraphFromTrace(mode, trace) {
   // 1. 初始化客户端
   ensureNode('client', '客户端', 'client', 'client');
   
-  // 2. 初始化递归 DNS (仅递归模式)
+  // 2. 初始化本地服务器 (仅递归模式)
   if (normalizedMode === 'recursive') {
-    ensureNode('resolver', '递归 DNS', 'resolver', 'resolver');
+    ensureNode('resolver', '本地服务器', 'resolver', 'resolver');
+  }
+  
+  // 3. 初始化本地服务器 (仅迭代模式)
+  if (normalizedMode === 'iterative') {
+    ensureNode('local-server', '本地服务器', 'resolver', 'local');
   }
 
-  let serverSteps = trace.filter((step) => ['root', 'tld', 'auth'].includes(step.level));
-
-  // 3. 初始化各级服务器节点
-  serverSteps.forEach((step) => {
-    const serverId = `server:${step.server}`;
-    if (!nodeSet.has(serverId)) {
-      const label = normalizedMode === 'recursive' ? labelForRecursiveServer(step) : step.server;
-      // 传入 step.level ('root', 'tld', 'auth') 以应用不同颜色
-      ensureNode(serverId, label, 'server', step.level);
-    }
-  });
+  // 4. 检查是否有缓存命中
+  const hasCacheHit = trace.some(step => 
+    step.cache_hit || 
+    (step.server && step.server.includes('cache')) ||
+    (step.response && step.response.cache_hit)
+  );
+  
+  // 5. 检查是否有完整的解析步骤（Root/TLD/Auth）
+  const hasFullResolution = trace.some(step => 
+    step.server && (step.server.includes('root') || step.server.includes('tld') || step.server.includes('auth'))
+  );
 
   if (normalizedMode === 'iterative') {
-    serverSteps.forEach((step, idx) => {
-      const target = `server:${step.server}`;
-      const labelReq = `Q: ${step.qtype}`;
-      const labelResp = `R: ${summarizeResponse(step)}`;
+    if (hasCacheHit && !hasFullResolution) {
+      // 缓存命中：只显示客户端和本地服务器之间的通信
+      // 客户端 -> 本地服务器
+      addEdge('client', 'local-server', 'Query', '客户端请求本地服务器', 'path-client-local');
       
-      const detailReq = formatDetail(step, 'req');
-      const detailResp = formatDetail(step, 'resp');
+      // 本地服务器 -> 客户端
+      addEdge('local-server', 'client', 'Result', '本地服务器返回结果（缓存命中）', 'path-local-client');
+    } else {
+      // 缓存未命中：显示完整的解析路径
+      // 客户端 -> 本地服务器
+      addEdge('client', 'local-server', 'Query', '客户端请求本地服务器', 'path-client-local');
+      
+      // 过滤服务器步骤，包括 root/tld/auth/local，并排除cache相关步骤
+      let serverSteps = trace.filter((step) => 
+        ['root', 'tld', 'auth', 'local'].includes(step.level) && 
+        !step.server.includes('cache')
+      );
+      
+      // 处理本地服务器的子步骤
+      let actualServerSteps = [];
+      for (const step of serverSteps) {
+        if (step.level === 'local' && step.server.startsWith('local->')) {
+          // 提取实际服务器信息
+          const actualServer = step.server.substring(7);
+          actualServerSteps.push({
+            ...step,
+            server: actualServer,
+            level: step.server.includes('root') ? 'root' : 
+                   step.server.includes('tld') ? 'tld' : 'auth'
+          });
+        } else {
+          actualServerSteps.push(step);
+        }
+      }
 
-      addEdge('client', target, labelReq, detailReq, `path-${idx}-req`);
-      addEdge(target, 'client', labelResp, detailResp, `path-${idx}-resp`);
-    });
+      // 初始化各级服务器节点
+      actualServerSteps.forEach((step) => {
+        const serverId = `server:${step.server}`;
+        if (!nodeSet.has(serverId)) {
+          const label = normalizedMode === 'recursive' ? labelForRecursiveServer(step) : step.server;
+          // 传入 step.level ('root', 'tld', 'auth') 以应用不同颜色
+          ensureNode(serverId, label, 'server', step.level);
+        }
+      });
+      
+      // 本地服务器 -> 各级服务器 -> 本地服务器
+      actualServerSteps.forEach((step, idx) => {
+        const target = `server:${step.server}`;
+        const labelReq = `Q: ${step.qtype}`;
+        const labelResp = `R: ${summarizeResponse(step)}`;
+        
+        const detailReq = formatDetail(step, 'req');
+        const detailResp = formatDetail(step, 'resp');
+
+        // 本地服务器 -> 目标服务器
+        addEdge('local-server', target, labelReq, detailReq, `path-${idx}-req`);
+        // 目标服务器 -> 本地服务器
+        addEdge(target, 'local-server', labelResp, detailResp, `path-${idx}-resp`);
+      });
+      
+      // 本地服务器 -> 客户端
+      addEdge('local-server', 'client', 'Result', '本地服务器返回结果', 'path-local-client');
+    }
   } else {
-    // Recursive Mode
+    // 递归模式：保持原有逻辑
+    // 过滤服务器步骤，包括 root/tld/auth/local
+    let serverSteps = trace.filter((step) => ['root', 'tld', 'auth', 'local'].includes(step.level));
+    
+    // 处理本地服务器的子步骤
+    let actualServerSteps = [];
+    for (const step of serverSteps) {
+      if (step.level === 'local' && step.server.startsWith('local->')) {
+        // 提取实际服务器信息
+        const actualServer = step.server.substring(7);
+        actualServerSteps.push({
+          ...step,
+          server: actualServer,
+          level: step.server.includes('root') ? 'root' : 
+                 step.server.includes('tld') ? 'tld' : 'auth'
+        });
+      } else {
+        actualServerSteps.push(step);
+      }
+    }
+
+    // 初始化各级服务器节点
+    actualServerSteps.forEach((step) => {
+      const serverId = `server:${step.server}`;
+      if (!nodeSet.has(serverId)) {
+        const label = normalizedMode === 'recursive' ? labelForRecursiveServer(step) : step.server;
+        // 传入 step.level ('root', 'tld', 'auth') 以应用不同颜色
+        ensureNode(serverId, label, 'server', step.level);
+      }
+    });
+
+    // Recursive Mode (保持不变)
     addEdge('client', 'resolver', 'Query', 'Initial Query', 'path-client-resolver');
 
-    if (serverSteps.length > 0) {
-      const first = serverSteps[0];
+    if (actualServerSteps.length > 0) {
+      const first = actualServerSteps[0];
       const firstId = `server:${first.server}`;
       addEdge('resolver', firstId, `Q: ${first.qtype}`, formatDetail(first, 'req'), `path-req-0`);
 
-      for (let i = 0; i < serverSteps.length - 1; i++) {
-        const from = `server:${serverSteps[i].server}`;
-        const to = `server:${serverSteps[i + 1].server}`;
-        const nextStep = serverSteps[i+1];
+      for (let i = 0; i < actualServerSteps.length - 1; i++) {
+        const from = `server:${actualServerSteps[i].server}`;
+        const to = `server:${actualServerSteps[i + 1].server}`;
+        const nextStep = actualServerSteps[i+1];
         addEdge(from, to, `Q: ${nextStep.qtype}`, formatDetail(nextStep, 'req'), `path-req-${i+1}`);
       }
 
-      for (let i = serverSteps.length - 1; i >= 0; i--) {
-        const from = `server:${serverSteps[i].server}`;
-        const to = i > 0 ? `server:${serverSteps[i - 1].server}` : 'resolver';
-        const status = summarizeResponse(serverSteps[i]);
-        addEdge(from, to, status, formatDetail(serverSteps[i], 'resp'), `path-resp-${i}`);
+      for (let i = actualServerSteps.length - 1; i >= 0; i--) {
+        const from = `server:${actualServerSteps[i].server}`;
+        const to = i > 0 ? `server:${actualServerSteps[i - 1].server}` : 'resolver';
+        const status = summarizeResponse(actualServerSteps[i]);
+        addEdge(from, to, status, formatDetail(actualServerSteps[i], 'resp'), `path-resp-${i}`);
       }
     }
     addEdge('resolver', 'client', 'Result', 'Resolution Complete', 'path-resolver-client');
@@ -346,16 +443,65 @@ async function animateResolution(mode, trace, isError) {
   const built = buildGraphFromTrace(mode, trace);
   const elements = built.elements;
   
-  // 调整布局参数以适应更大的节点
-  const layout = mode === 'iterative'
-      ? { name: 'circle', padding: 60, avoidOverlap: true, spacingFactor: 1.5 }
-      : { name: 'breadthfirst', directed: true, padding: 40, spacingFactor: 1.3, avoidOverlap: true };
-
   if (!cy) {
     initGraph(elements);
   } else {
     cy.elements().remove();
     cy.add(elements);
+  }
+  
+  // 等待图形初始化完成
+  await delay(100);
+  
+  if (mode === 'iterative') {
+    // 迭代模式：自定义布局，分成左中右三部分
+    
+    // 固定位置坐标
+    const positions = {
+      'client': { x: 100, y: 250 },       // 左侧：客户端
+      'local-server': { x: 300, y: 250 }  // 中间：本地服务器
+    };
+    
+    // 设置客户端和本地服务器的位置
+    cy.nodes().forEach(node => {
+      const id = node.id();
+      if (positions[id]) {
+        node.position(positions[id]);
+      }
+    });
+    
+    // 处理其他服务器节点（右部分）
+    const otherNodes = cy.nodes().filter(node => 
+      node.id() !== 'client' && node.id() !== 'local-server'
+    );
+    
+    // 按查询顺序排列右侧服务器节点
+    const serverOrder = ['root-server', 'a.gtld-servers.net', 'ns1.example.com'];
+    
+    otherNodes.forEach((node, idx) => {
+      // 找到节点在查询顺序中的位置
+      const serverName = node.data('label').replace(/\n.*$/, '');
+      let orderIdx = serverOrder.indexOf(serverName);
+      if (orderIdx === -1) orderIdx = idx;
+      
+      // 设置右侧位置，从上往下排列
+      node.position({
+        x: 600,  // 右侧固定X坐标
+        y: 100 + orderIdx * 120  // 从上往下排列，间距120px
+      });
+    });
+    
+    // 调整视图以适应所有节点
+    cy.fit(50);
+  } else {
+    // 递归模式：保持原有布局
+    const layout = { 
+      name: 'breadthfirst', 
+      directed: true, 
+      padding: 40, 
+      spacingFactor: 1.3, 
+      avoidOverlap: true 
+    };
     
     const layoutInstance = cy.layout(layout);
     const layoutDone = new Promise(resolve => layoutInstance.one('layoutstop', resolve));

@@ -152,26 +152,48 @@ class DNSEngine:
         return response, trace
 
     def iterative_resolve(self, qname: str, qtype: str, config: dict) -> Tuple[dict, List[dict]]:
-        """迭代查询逻辑 (模拟客户端直接发起)"""
+        """迭代查询逻辑 (模拟客户端 -> 本地服务器 -> 互联网)"""
         trace: List[dict] = []
+        unstable_net = config["failure"]
+        latency = self._simulated_latency_ms(unstable_net)
         
-        # 1. 检查 Client Cache
+        # 1. 客户端 -> 本地服务器
+        local_server_response = {"status": "OK", "records": [], "ttl": 0, "cache_hit": False}
+        trace.append(self._build_trace_step("local-server", "client", qname, qtype, local_server_response, 
+                                          False, latency, 0))
+
+        # 2. 检查本地服务器 Cache
         should_skip_cache = config["pollution"] or config["failure"] or config["lb"]
+        cache_hit = False
         if not should_skip_cache:
             entry = self.get_cache('client', qname, qtype)
             if entry:
-                step = self._build_trace_step("cache", "client", qname, qtype, entry.value, 
+                cache_hit = True
+                # 缓存命中，添加cache相关的trace步骤
+                step = self._build_trace_step("local-cache", "local", qname, qtype, entry.value, 
                                             True, 1, self._remaining_ttl(entry))
                 trace.append(step)
-                return entry.value, trace
+                response = entry.value
+            
+        if not cache_hit:
+            # 3. 本地服务器执行核心解析 (Root -> TLD -> Auth)
+            response, steps = self._core_resolve(qname, qtype, config)
+            # 修改步骤的level为local，表明这些步骤是本地服务器执行的
+            for step in steps:
+                step["level"] = "local"
+                step["server"] = f"local->{step['server']}"
+            # 添加这些步骤到trace中，以便前端根据cache_hit状态决定是否显示
+            trace.extend(steps)
 
-        # 2. 执行核心解析
-        response, steps = self._core_resolve(qname, qtype, config)
-        trace.extend(steps)
+            # 4. 写入本地服务器 Cache
+            if response["status"] == "OK" and response.get("ttl", 0) > 0:
+                self.set_cache('client', qname, qtype, response, response["ttl"])
 
-        # 3. 写入 Client Cache
-        if response["status"] == "OK" and response.get("ttl", 0) > 0:
-            self.set_cache('client', qname, qtype, response, response["ttl"])
+        # 5. 本地服务器 -> 客户端
+        local_response = response.copy()
+        local_response["cache_hit"] = cache_hit
+        trace.append(self._build_trace_step("local-server", "client", qname, qtype, local_response, 
+                                          False, latency, response.get("ttl", 0)))
 
         return response, trace
 
