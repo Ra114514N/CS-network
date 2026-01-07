@@ -1,7 +1,9 @@
 import os
+from collections import deque
 from flask import Flask, jsonify, request, send_from_directory
 from core.engine import DNSEngine
 from analysis.ai_client import generate_ai_feedback
+from analysis.risk_predictor import predict_future_risk
 
 # 设置路径
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +13,9 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 
 # 初始化全局单例仿真引擎
 dns_engine = DNSEngine()
+
+# 记录最近的统计步驟，用于预测
+STATS_HISTORY = deque(maxlen=200)
 
 
 @app.route("/")
@@ -74,6 +79,15 @@ def resolve():
         "is_error": is_error
     }
 
+    # 记录历史，供 AI 风险预测使用
+    STATS_HISTORY.append({
+        "stats": stats,
+        "domain": qname,
+        "qtype": qtype,
+        "mode": mode,
+        "scenarios": scenarios,
+    })
+
     # 3. 返回综合结果，AI 仅在单独接口触发
     return jsonify({
         "result": response,
@@ -110,6 +124,26 @@ def ai_analyze():
     )
 
     return jsonify(advice)
+
+
+@app.route("/ai/predict", methods=["GET"])
+def ai_predict():
+    """
+    基于最近 N 次统计数据预测未来失败率/污染概率。
+    如无历史数据，则返回基线预测。
+    """
+    try:
+        n = int(request.args.get("n", 12))
+    except Exception:
+        n = 12
+    recent = list(STATS_HISTORY)[-n:]
+    stats_list = [item["stats"] for item in recent]
+    prediction = predict_future_risk(stats_list)
+
+    return jsonify({
+        "prediction": prediction,
+        "recent": recent
+    })
 
 
 @app.after_request

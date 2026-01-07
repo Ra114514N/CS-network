@@ -7,6 +7,9 @@ const aiQuestionInput = document.getElementById('ai-question');
 const loadingMask = document.getElementById('loading-mask');
 const tooltipEl = document.getElementById('graph-tooltip');
 const packetEl = document.getElementById('packet');
+const riskSummaryEl = document.getElementById('risk-summary');
+const riskTrendEl = document.getElementById('risk-trend');
+const refreshRiskBtn = document.getElementById('refresh-risk');
 
 let cy = null;
 let lastContext = null;
@@ -576,6 +579,64 @@ function renderAI(text) {
   }
 }
 
+function renderRiskTrend(trend, recent = []) {
+  if (!trend || !Array.isArray(trend.failure_rates) || trend.failure_rates.length === 0) {
+    riskTrendEl.textContent = '尚无趋势数据';
+    return;
+  }
+
+  const bars = trend.failure_rates.map((val, idx) => {
+    const pct = Math.min(100, Math.round(val * 100));
+    const status = (trend.statuses && trend.statuses[idx]) || (recent[idx]?.stats?.status) || '';
+    let cls = 'ok';
+    if (status === 'POLLUTED') cls = 'polluted';
+    else if (status && status !== 'OK') cls = 'error';
+    const height = 12 + pct * 0.6;
+    return `<div class="risk-bar ${cls}" style="height:${height}px" title="Step ${idx + 1}: fail ${pct}%, status ${status}"></div>`;
+  }).join('');
+
+  riskTrendEl.innerHTML = `<div class="risk-trend-bars">${bars}</div>`;
+}
+
+function renderRiskPrediction(payload) {
+  if (!payload || !payload.prediction) {
+    riskSummaryEl.textContent = '等待数据...';
+    riskTrendEl.textContent = '';
+    return;
+  }
+  const { prediction, recent } = payload;
+  const failurePct = ((prediction.predicted_failure_rate || 0) * 100).toFixed(0);
+  const pollutionPct = ((prediction.predicted_pollution_rate || 0) * 100).toFixed(0);
+  const basis = prediction.basis || 'N/A';
+
+  riskSummaryEl.innerHTML = `
+    <div class="risk-grid">
+      <div>
+        <div class="risk-label">预测失败率</div>
+        <div class="risk-value danger">${failurePct}%</div>
+      </div>
+      <div>
+        <div class="risk-label">预测污染概率</div>
+        <div class="risk-value warn">${pollutionPct}%</div>
+      </div>
+      <div class="risk-basis">依据：${basis}</div>
+    </div>
+  `;
+
+  renderRiskTrend(prediction.trend, recent);
+}
+
+async function fetchRiskPrediction(n = 12) {
+  if (!riskSummaryEl || !riskTrendEl) return;
+  try {
+    const res = await fetch(`/ai/predict?n=${n}`);
+    const data = await res.json();
+    renderRiskPrediction(data);
+  } catch (err) {
+    riskSummaryEl.textContent = `风险预测失败: ${err.message}`;
+  }
+}
+
 function appendTraceLine(text) {
   const p = document.createElement('div');
   p.className = 'trace-line';
@@ -645,6 +706,8 @@ async function resolve() {
       domain, qtype, mode: renderMode, scenarios, stats: data.stats, result: data.result, trace: data.trace,
     };
 
+    fetchRiskPrediction();
+
   } catch (err) {
     console.error(err);
     setLoading(false);
@@ -685,7 +748,11 @@ async function askAI() {
 
 resolveBtn.addEventListener('click', resolve);
 askAiBtn.addEventListener('click', askAI);
+refreshRiskBtn.addEventListener('click', () => fetchRiskPrediction());
 // 支持回车查询
 document.getElementById('domain').addEventListener('keypress', (e) => {
   if (e.key === 'Enter') resolve();
 });
+
+// 页面初始化时尝试拉取一次预测基线
+fetchRiskPrediction();
