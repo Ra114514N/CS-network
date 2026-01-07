@@ -67,7 +67,7 @@ def resolve():
 
     # 判断是否为"错误"状态
     status = response.get("status", "UNKNOWN")
-    error_statuses = {"TIMEOUT", "SERVFAIL", "POLLUTED", "NXDOMAIN"}
+    error_statuses = {"TIMEOUT", "SERVFAIL", "POLLUTED", "NXDOMAIN", "RPZ_BLOCK"}
     is_error = status in error_statuses
     failure_rate = 1 if is_error else 0
 

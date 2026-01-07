@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+backend/core/__pycache__/engine.cpython-312.pyc
+backend/data/__pycache__/mock_db.cpython-312.pyc

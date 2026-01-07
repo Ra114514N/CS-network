@@ -76,6 +76,10 @@ function initGraph(elements) {
         selector: 'node[level="auth"]',
         style: { 'background-color': '#add8e6', 'border-color': '#80b8c6' }
       },
+      {
+        selector: 'node[level="policy"]',
+        style: { 'background-color': '#f0e5ff', 'border-color': '#b37feb', 'border-width': 2 }
+      },
       // --- 连线样式 ---
       {
         selector: 'edge',
@@ -171,6 +175,7 @@ function normalizeServerName(server) {
 
 function roleFromStep(step, mode) {
   const server = normalizeServerName(step.server || '');
+  if (step.level === 'policy' || server.includes('rpz')) return 'RPZ 策略';
   if (step.level === 'root' || server.includes('root')) return '根DNS';
   if (step.level === 'tld' || server.includes('gtld') || server.includes('tld')) return '顶级域DNS';
   if (step.level === 'auth') return '权威DNS';
@@ -191,6 +196,14 @@ function formatTraceMessage(step, idx, mode) {
   const role = roleFromStep(step, mode);
   const roleWithServer = serverName ? `${role} (${serverName})` : role;
   const records = formatRecords(step);
+  const rpzReason = step?.response?.rpz_reason;
+
+  // RPZ 命中：无论在 policy 节点还是后续返回，都优先展示命中原因
+  if (rpzReason || step.level === 'policy' || (step.server || '').includes('rpz')) {
+    const actionText = status === 'RPZ_CNAME' ? `重写为 ${records || '拦截页'}` : '阻断';
+    const reasonText = rpzReason ? `，原因：${rpzReason}` : '';
+    return `步骤 ${idx + 1}: 命中 RPZ 规则（${step.qname} ${step.qtype}），动作：${actionText}${reasonText}`;
+  }
 
   if (step.server && step.server.includes('cache')) {
     return `步骤 ${idx + 1}: 检查本地缓存（${step.cache_hit ? '命中' : '未命中'}），记录: ${records}`;
@@ -203,13 +216,13 @@ function formatTraceMessage(step, idx, mode) {
     if (step.cache_hit) {
       return `步骤 ${idx + 1}: ${role}缓存命中，返回记录: ${records}`;
     }
-    if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN'].includes(status)) {
+    if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN', 'RPZ_BLOCK'].includes(status)) {
       return `步骤 ${idx + 1}: ${role}返回错误 ${status}`;
     }
     return `步骤 ${idx + 1}: ${role}返回结果: ${records}`;
   }
 
-  if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN'].includes(status)) {
+  if (['TIMEOUT', 'SERVFAIL', 'POLLUTED', 'NXDOMAIN', 'RPZ_BLOCK'].includes(status)) {
     return `步骤 ${idx + 1}: ${roleWithServer}响应异常：${status}`;
   }
 
@@ -222,11 +235,13 @@ function formatDetail(step, type) {
   const latency = step.latency_ms;
   const cache = step.cache_hit ? 'Yes' : 'No';
   const records = step.response.records ? step.response.records.join(', ') : 'None';
+  const reason = step.response.rpz_reason;
   
   if (type === 'req') {
     return `📡 Request\nTarget: ${server}\nQuery: ${step.qname} (${step.qtype})`;
   } else {
-    return `📨 Response\nFrom: ${server}\nStatus: ${status}\nLatency: ${latency}ms\nCache Hit: ${cache}\nRecords: ${records}`;
+    const reasonLine = reason ? `\nReason: ${reason}` : '';
+    return `📨 Response\nFrom: ${server}\nStatus: ${status}\nLatency: ${latency}ms\nCache Hit: ${cache}\nRecords: ${records}${reasonLine}`;
   }
 }
 
@@ -278,7 +293,7 @@ function buildGraphFromTrace(mode, trace) {
       addEdge('client', 'local-server', 'Query', '客户端请求本地服务器', 'path-client-local');
       
       let serverSteps = trace.filter((step) => 
-        ['root', 'tld', 'auth', 'local'].includes(step.level) && !step.server.includes('cache')
+        ['root', 'tld', 'auth', 'local', 'policy'].includes(step.level) && !step.server.includes('cache')
       );
       
       let actualServerSteps = [];
@@ -312,7 +327,7 @@ function buildGraphFromTrace(mode, trace) {
     }
   } else {
     // 递归模式
-    let serverSteps = trace.filter((step) => ['root', 'tld', 'auth', 'local'].includes(step.level));
+    let serverSteps = trace.filter((step) => ['root', 'tld', 'auth', 'local', 'policy'].includes(step.level));
     let actualServerSteps = [];
     for (const step of serverSteps) {
       if (step.level === 'local' && step.server.startsWith('local->')) {

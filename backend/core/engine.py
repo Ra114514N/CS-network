@@ -1,3 +1,5 @@
+import os
+import json
 import time
 import random
 from dataclasses import dataclass
@@ -20,6 +22,9 @@ class DNSEngine:
         
         # 负载均衡状态记录
         self.lb_state: Dict[str, int] = {}
+
+        # RPZ 策略区（安全 DNS 黑名单）
+        self.rpz_rules = self._load_rpz_rules()
 
     def _now_ts(self) -> float:
         return time.time()
@@ -56,6 +61,48 @@ class DNSEngine:
         if unstable:
             return random.randint(10, 60)
         return 30
+
+    def _load_rpz_rules(self) -> Dict[str, dict]:
+        """从 data/policy_rules.json 读取策略区规则。缺失则返回空。"""
+        try:
+            data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+            path = os.path.join(data_dir, "policy_rules.json")
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _check_rpz(self, qname: str, qtype: str) -> Optional[Tuple[dict, List[dict]]]:
+        """
+        命中 RPZ 黑名单时直接返回策略结果和 trace。
+        """
+        rule = self.rpz_rules.get(qname)
+        if not rule:
+            return None
+
+        action = (rule.get("action") or "NXDOMAIN").upper()
+        ttl = int(rule.get("ttl", 60))
+        reason = rule.get("reason", "Blocked by RPZ")
+
+        if action == "NXDOMAIN":
+            response = {"status": "RPZ_BLOCK", "records": [], "ttl": ttl, "rpz_reason": reason}
+        elif action == "CNAME":
+            target = rule.get("target", "blockpage.local")
+            response = {"status": "RPZ_CNAME", "records": [target], "ttl": ttl, "rpz_reason": reason}
+        else:
+            return None
+
+        trace_step = self._build_trace_step(
+            server="rpz-policy",
+            level="policy",
+            qname=qname,
+            qtype=qtype,
+            response=response,
+            cache_hit=False,
+            latency_ms=5,
+            ttl_remaining=ttl,
+        )
+        return response, [trace_step]
 
     def _maybe_fail(self, server: str, enabled: bool) -> bool:
         if not enabled:
@@ -223,6 +270,17 @@ class DNSEngine:
         trace.append(self._build_trace_step("local-server", "client", qname, qtype, local_server_response, 
                                           False, latency, 0))
 
+        # 1.5 RPZ 策略拦截
+        rpz_result = self._check_rpz(qname, qtype)
+        if rpz_result:
+            response, rpz_trace = rpz_result
+            trace.extend(rpz_trace)
+            final_resp = response.copy()
+            final_resp["cache_hit"] = False
+            trace.append(self._build_trace_step("local-server", "client", qname, qtype, final_resp, 
+                                              False, latency, response.get("ttl", 0)))
+            return response, trace
+
         # 2. 检查本地服务器 Cache
         should_skip_cache = config["pollution"] or config["failure"] or config["lb"]
         cache_hit = False
@@ -268,6 +326,14 @@ class DNSEngine:
         if self._maybe_fail("recursive-resolver", config["failure"]):
             response = {"status": "SERVFAIL", "records": [], "ttl": 0}
             trace.append(self._build_trace_step("recursive-resolver", "client", qname, qtype, response, False, latency, 0))
+            return response, trace
+
+        # 1.5 RPZ 策略拦截
+        rpz_result = self._check_rpz(qname, qtype)
+        if rpz_result:
+            response, rpz_trace = rpz_result
+            trace.extend(rpz_trace)
+            trace.append(self._build_trace_step("recursive-resolver", "client", qname, qtype, response, False, latency, response.get("ttl", 0)))
             return response, trace
 
         # 2. 检查 Resolver Cache

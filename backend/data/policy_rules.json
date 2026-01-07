@@ -1,0 +1,24 @@
+{
+  "bad.com": {
+    "action": "NXDOMAIN",
+    "reason": "列入全球 RPZ 黑名单（演示）",
+    "ttl": 120
+  },
+  "ads.com": {
+    "action": "CNAME",
+    "target": "blockpage.security.local",
+    "reason": "广告域名重定向至拦截页",
+    "ttl": 120
+  },
+  "malware.guet.edu.cn": {
+    "action": "NXDOMAIN",
+    "reason": "校园钓鱼/恶意域名阻断",
+    "ttl": 180
+  },
+  "track.guet.edu.cn": {
+    "action": "CNAME",
+    "target": "block.guet.edu.cn",
+    "reason": "可疑跟踪域名重写到告警页",
+    "ttl": 180
+  }
+}
