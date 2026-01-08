@@ -493,6 +493,8 @@ async function animateResolution(mode, trace, isError) {
     cy.boxSelectionEnabled(false);
   }
   
+  // 重置动画控制器，避免上一次 abort 后 signal 一直处于 aborted 状态
+  animationController = new AbortController();
   const signal = animationController.signal;
   const edgeIds = built.pathEdgeIds;
 
@@ -708,7 +710,7 @@ async function resolve() {
     const renderMode = data.mode || mode;
 
     const status = (data.stats && data.stats.status) || 'UNKNOWN';
-    const isError = (data.stats && data.stats.is_error) || ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN'].includes(status);
+    const isError = (data.stats && data.stats.is_error) || ['POLLUTED', 'TIMEOUT', 'SERVFAIL', 'NXDOMAIN', 'RPZ_BLOCK'].includes(status);
 
     setLoading(false);
 
