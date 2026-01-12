@@ -50,5 +50,5 @@ python backend/app.py
 
 ## 依赖
 - Flask 3.x
-- requests (AI 调用)
+- openai 2.x
 

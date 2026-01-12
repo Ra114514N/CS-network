@@ -1,16 +1,15 @@
 import textwrap
 from typing import Dict, List, Optional, Tuple
 
-
-import requests
+from openai import OpenAI
 
 from analysis.stats import ai_advisor as rule_based_advice
 
 # SiliconFlow 配置：请在此直接填写 API Key。
 AI_API_KEY = ""
-AI_BASE_URL = ""
+AI_BASE_URL = "https://api.siliconflow.cn/v1"
 # 模型按照示例使用 deepseek-ai/DeepSeek-V3
-AI_MODEL = "deepseek-ai/DeepSeek-V3"
+AI_MODEL = "deepseek-ai/DeepSeek-V3.2"
 
 
 def _render_trace(trace: List[Dict], limit: int = 6) -> str:
@@ -22,7 +21,11 @@ def _render_trace(trace: List[Dict], limit: int = 6) -> str:
     for idx, step in enumerate(trace[:limit]):
         resp = step.get("response", {})
         status = resp if isinstance(resp, str) else resp.get("status", "UNKNOWN")
-        line = f"{idx + 1}. {step.get('level')}@{step.get('server')}: {step.get('qname')} {step.get('qtype')} -> {status}, latency={step.get('latency_ms')}ms, cache={step.get('cache_hit')}"
+        line = (
+            f"{idx + 1}. {step.get('level')}@{step.get('server')}: "
+            f"{step.get('qname')} {step.get('qtype')} -> {status}, "
+            f"latency={step.get('latency_ms')}ms, cache={step.get('cache_hit')}"
+        )
         lines.append(line)
 
     if len(trace) > limit:
@@ -60,44 +63,89 @@ def _build_prompt(
 
 请用中文简洁回答，重点指出可能的原因和建议。用户的问题是: {question}
 """
-
     return textwrap.dedent(base_prompt).strip()
 
 
+def _get_client() -> OpenAI:
+    """
+    Create OpenAI SDK client pointing to SiliconFlow OpenAI-compatible endpoint.
+    """
+    return OpenAI(
+        base_url=AI_BASE_URL,
+        api_key=AI_API_KEY,
+    )
+
+
 def _call_ai(prompt: str) -> Tuple[Optional[str], Optional[str]]:
-    """Call the SiliconFlow chat model; return (text, error)."""
-    if not AI_API_KEY or "REPLACE_WITH_YOUR_SILICONFLOW_API_KEY" in AI_API_KEY:
-        return None, "AI_API_KEY 未配置，请在 backend/analysis/ai_client.py 中替换为真实密钥。"
+    """Call the SiliconFlow chat model via OpenAI SDK; return (text, error)."""
+    if not AI_API_KEY:
+        return None, "AI_API_KEY 未配置，请填写真实密钥。"
+    if not AI_BASE_URL:
+        return None, "AI_BASE_URL 未配置，请填写 SiliconFlow 的 base_url（如 https://api.siliconflow.cn/v1）。"
 
     try:
-        url = f"{AI_BASE_URL.rstrip('/')}/chat/completions"
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+        client = _get_client()
+
+        # 非流式：保持你原有的同步返回逻辑
+        resp = client.chat.completions.create(
+            model=AI_MODEL,
+            messages=[
                 {"role": "system", "content": "You are a concise DNS and networking troubleshooting assistant."},
                 {"role": "user", "content": prompt},
             ],
-            "stream": False,
-            "max_tokens": 1024,
-            "temperature": 0.3,
-            "top_p": 0.7,
-            "top_k": 50,
-            "frequency_penalty": 0.1,
-            "response_format": {"type": "text"},
-        }
-        headers = {
-            "Authorization": f"Bearer {AI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        resp = requests.post(url, json=payload, headers=headers, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        message = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            stream=False,
+            max_tokens=1024,
+            temperature=0.3,
+            top_p=0.7,
+            # 注意：OpenAI 标准参数里没有 top_k，这个字段是否被 SiliconFlow 接受取决于其兼容实现；
+            # 若 SiliconFlow 支持额外字段，通常需要走 extra_body（见下方注释）。
+            frequency_penalty=0.1,
+            # response_format 在新 SDK/不同后端兼容性不一；若报错可移除
+            response_format={"type": "text"},
+            # 如果 SiliconFlow 需要 top_k 等扩展参数，可用 extra_body 透传：
+            # extra_body={"top_k": 50},
+        )
+
+        message = (resp.choices[0].message.content or "").strip()
         if not message:
             return None, "AI 响应为空。"
-        return message.strip(), None
+        return message, None
+
     except Exception as exc:  # noqa: BLE001
         return None, str(exc)
+
+
+# （可选）如果你以后想支持流式输出，可加一个函数：
+def _call_ai_stream(prompt: str):
+    """
+    Yield incremental text chunks (content + reasoning_content if provided by backend).
+    用法：for piece in _call_ai_stream(prompt): print(piece, end="")
+    """
+    client = _get_client()
+    stream = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=[
+            {"role": "system", "content": "You are a concise DNS and networking troubleshooting assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+        max_tokens=1024,
+        temperature=0.3,
+        top_p=0.7,
+        frequency_penalty=0.1,
+        # extra_body={"top_k": 50},
+    )
+
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        # content
+        if getattr(delta, "content", None):
+            yield delta.content
+        # 一些后端（如你示例）会给 reasoning_content
+        if getattr(delta, "reasoning_content", None):
+            yield delta.reasoning_content
 
 
 def generate_ai_feedback(
