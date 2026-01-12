@@ -7,8 +7,8 @@ import requests
 from analysis.stats import ai_advisor as rule_based_advice
 
 # SiliconFlow 配置：请在此直接填写 API Key。
-AI_API_KEY = "sk-ytdhtmdyzkomlpmdkuatkrffxrbhdovnrwxvmknwbctqlzee"
-AI_BASE_URL = "https://api.siliconflow.cn/v1/"
+AI_API_KEY = ""
+AI_BASE_URL = ""
 # 模型按照示例使用 deepseek-ai/DeepSeek-V3
 AI_MODEL = "deepseek-ai/DeepSeek-V3"
 
